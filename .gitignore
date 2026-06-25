@@ -1,0 +1,26 @@
+# Maxfiy ma'lumotlar — HECH QACHON commit qilinmasin
+config.py
+cam_keys.json
+*token*.json
+token.json
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+ENV/
+
+# Debug / vaqtinchalik fayllar
+_*.png
+_*.h265
+_*.ps
+_*.ts
+*.log
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db

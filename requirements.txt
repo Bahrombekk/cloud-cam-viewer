@@ -1,0 +1,5 @@
+pyezvizapi
+opencv-python
+numpy
+requests
+pycryptodome
