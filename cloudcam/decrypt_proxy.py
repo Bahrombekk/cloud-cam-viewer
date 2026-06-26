@@ -123,6 +123,8 @@ class _NalDecryptBase:
     def _emit(self, out: bytearray, nal) -> None:
         if len(nal) >= 2:
             self._detect((nal[0] >> 1) & 0x3F, nal[2:])
+            if self._decrypt is None:
+                return  # shifr aniqlanmaguncha (VPS'gacha) garbage chiqarmaymiz
             out += START + bytes(nal[:2]) + self._decrypt_body(nal[2:])
 
 
@@ -194,6 +196,8 @@ class H264RtpDecryptor(_NalDecryptBase):
     def _emit(self, out: bytearray, nal):  # override: 1 baytli NAL header
         if len(nal) >= 1:
             self._detect(nal[0] & 0x1F, nal[1:])
+            if self._decrypt is None:
+                return  # shifr aniqlanmaguncha (SPS'gacha) garbage chiqarmaymiz
             out += START + bytes(nal[:1]) + self._decrypt_body(nal[1:])
 
     def feed(self, rtp_packet: bytes) -> bytes:
@@ -273,6 +277,8 @@ class PsStreamDecryptor(_NalDecryptBase):
             return
         if self._decrypt is None:
             self._detect_ps(b0, nal[hdr:])
+        if self._decrypt is None:
+            return  # shifr aniqlanmaguncha garbage chiqarmaymiz
         out += START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
 
     def _detect_ps(self, b0, body):
@@ -409,7 +415,6 @@ def list_cameras(client=None):
 
 def serve(serial: str, port: int, key: str, channel: int = 1):
     client = _make_client()
-    from pyezvizapi.__main__ import _open_mpegts_remux_process
 
     def _flag_keyerror():
         try:
@@ -423,21 +428,20 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
             pass
 
         def do_GET(self):
-            # Ikkala formatni qo'llaymiz: RTP/HEVC (NVR'lar) va MPEG-PS (battery/IPC).
-            # Ichki ffmpeg orqali MPEG-TS qilib uzatamiz (tashqi tomon TS o'qiydi).
+            # Xom oqimni dekodlab to'g'ridan-to'g'ri uzatamiz (ichki ffmpeg yo'q):
+            #   RTP/PS -> Annex-B (H.264/HEVC), MPEG-TS -> o'zicha.
+            # Tashqi ffmpeg (stream_manager) codec'ni auto-detect qilib, bardoshli dekodlaydi.
             try:
                 stream_cm = open_cloud_stream(client, serial, channel=channel,
                                               client_type=9, refresh_vtm=False, timeout=20.0)
             except Exception:
                 self.send_error(502)
                 return
-            ff = None
-            stop = {"v": False}
             try:
                 with stream_cm as stream:
                     stream.start()
                     pkts = stream.iter_packets()
-                    # Format (RTP/PS) va codec (H.264/HEVC) ni aniqlash uchun
+                    # Format (RTP/PS/TS) va codec (H.264/HEVC) ni aniqlash uchun
                     # boshlang'ich paketlarni o'qiymiz (keyin ularni ham uzatamiz)
                     buffered = []
                     is_rtp = None
@@ -448,7 +452,7 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                         if is_rtp is None:
                             is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
                         if not is_rtp:
-                            break  # MPEG-PS
+                            break  # MPEG-PS yoki TS
                         if (b[1] & 0x7F) == HEVC_VIDEO_PT:
                             pl = rtp_payload(b)
                             if len(pl) >= 1:
@@ -462,63 +466,34 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                         return
 
                     if not is_rtp and buffered[0][:1] == b"\x47":
-                        # MPEG-TS — ffmpeg o'zi demux qiladi (har qanday codec, shifrsiz)
-                        transform = lambda b: b
+                        transform = lambda b: b              # MPEG-TS (shifrsiz)
                         keyerr = lambda: False
-                        infmt = "mpegts"
                     elif not is_rtp:
-                        dec = PsStreamDecryptor(key)        # MPEG-PS (H.264/HEVC avto)
-                        transform = dec.feed; keyerr = lambda: dec.key_error; infmt = "hevc"
+                        dec = PsStreamDecryptor(key)          # MPEG-PS (H.264/HEVC avto)
+                        transform = dec.feed; keyerr = lambda: dec.key_error
                     elif codec == "h264":
-                        dec = H264RtpDecryptor(key)         # RTP/H.264
-                        transform = dec.feed; keyerr = lambda: dec.key_error; infmt = "h264"
+                        dec = H264RtpDecryptor(key)           # RTP/H.264
+                        transform = dec.feed; keyerr = lambda: dec.key_error
                     else:
-                        dec = HevcRtpDecryptor(key)         # RTP/HEVC
-                        transform = dec.feed; keyerr = lambda: dec.key_error; infmt = "hevc"
+                        dec = HevcRtpDecryptor(key)           # RTP/HEVC
+                        transform = dec.feed; keyerr = lambda: dec.key_error
 
-                    ff = _open_mpegts_remux_process("ffmpeg", input_format=infmt)
                     self.send_response(200)
-                    self.send_header("Content-Type", "video/MP2T")
+                    self.send_header("Content-Type", "application/octet-stream")
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
 
-                    def pump():
-                        try:
-                            for body in chain(buffered, (bytes(p.body) for p in pkts)):
-                                if stop["v"]:
-                                    break
-                                data = transform(body)
-                                if keyerr():
-                                    _flag_keyerror()
-                                    break
-                                if data:
-                                    ff.stdin.write(data)
-                                    ff.stdin.flush()
-                        except Exception:
-                            pass
-                        finally:
-                            try:
-                                ff.stdin.close()
-                            except Exception:
-                                pass
-
-                    threading.Thread(target=pump, daemon=True).start()
-                    while True:
-                        chunk = ff.stdout.read(65536)
-                        if not chunk:
+                    for body in chain(buffered, (bytes(p.body) for p in pkts)):
+                        data = transform(body)
+                        if keyerr():
+                            _flag_keyerror()
                             break
-                        self.wfile.write(chunk)
+                        if data:
+                            self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             except Exception:
                 pass
-            finally:
-                stop["v"] = True
-                if ff:
-                    try:
-                        ff.terminate()
-                    except Exception:
-                        pass
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
