@@ -271,6 +271,26 @@ def _make_client():
     return client
 
 
+def list_cameras(client=None):
+    """Haqiqiy kameralar ro'yxati: [(serial, channel, name)].
+    VTM resurslaridan olinadi — bo'sh NVR kanallari (kamera ulanmagan) ko'rsatilmaydi."""
+    client = client or _make_client()
+    res = _cs.get_vtm_page_list(client).get("resourceInfos", []) or []
+    cams = []
+    for r in res:
+        try:
+            ch = int(r.get("localIndex"))
+        except (TypeError, ValueError):
+            continue
+        if ch < 1:  # localIndex 0 = qurilma (NVR) o'zi, kamera emas
+            continue
+        serial = r.get("deviceSerial")
+        name = (r.get("resourceName") or f"{serial} CH{ch}").strip()
+        cams.append((serial, ch, name))
+    cams.sort(key=lambda x: (x[0], x[1]))
+    return cams
+
+
 def serve(serial: str, port: int, key: str, channel: int = 1):
     client = _make_client()
     from pyezvizapi.__main__ import _open_mpegts_remux_process

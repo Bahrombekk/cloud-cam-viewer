@@ -25,31 +25,19 @@ import numpy as np
 
 from cloudcam.client import CloudClient
 from cloudcam.stream_manager import StreamManager, load_cam_keys
+from cloudcam import decrypt_proxy
 import config
 
 
-def choose_cameras(devices):
-    online = {s: d for s, d in devices.items() if d["status"] == 1}
-    offline = {s: d for s, d in devices.items() if d["status"] != 1}
-
-    # Har qurilmani kanallarga yoyamiz: NVR (4 kanal) -> 4 ta kamera.
-    # items: (serial, channel, display_name)
-    items = []
-    for serial, d in online.items():
-        nch = max(1, int(d.get("channels", 1) or 1))
-        for ch in range(1, nch + 1):
-            name = d["name"] if nch == 1 else f"{d['name']} CH{ch}"
-            items.append((serial, ch, name))
-
+def choose_cameras(items):
+    """items: [(serial, channel, name)] — faqat kamera ulangan kanallar."""
     print("\n" + "=" * 60)
     print("📷 KAMERALAR RO'YXATI")
     print("=" * 60)
     for i, (serial, ch, name) in enumerate(items, 1):
         print(f"  [{i:2}] 🟢 {name}  ({serial} ch{ch})")
-    if offline:
-        print("\n  --- Offline (tanlab bo'lmaydi) ---")
-        for serial, d in offline.items():
-            print(f"       🔴 {d['name']}  ({serial})")
+    if not items:
+        print("  (kamera topilmadi)")
     print("=" * 60)
     print("Tanlash: raqamlarni vergul bilan (masalan: 1,3,5) yoki 'all'")
     raw = input("➤ Tanlov: ").strip().lower()
@@ -120,8 +108,10 @@ def main():
     client.save_token(config.TOKEN_FILE)
     print("✅ Login muvaffaqiyatli!")
 
-    devices = client.get_devices()
-    chosen = choose_cameras(devices)
+    # Faqat haqiqiy kamera ulangan kanallarni ko'rsatamiz (bo'sh NVR slotlari emas)
+    print("📡 Kameralar aniqlanmoqda...")
+    cams = decrypt_proxy.list_cameras()
+    chosen = choose_cameras(cams)
     if not chosen:
         print("❌ Hech qaysi kamera tanlanmadi")
         return
