@@ -13,8 +13,9 @@ optional NVIDIA GPU decoding.
 
 - 🔐 Login to **EZVIZ** or **Hik-Connect** (auto region detection)
 - 📷 Lists all devices & **NVR channels** as separate cameras (e.g. 8 NVRs → 32 cameras)
-- 🔓 **Decrypts encrypted streams** with the device verification code (AES) — handles both
-  **RTP/HEVC** (NVR channels) and **MPEG-PS** (IP cameras) automatically
+- 🔓 **Decrypts encrypted streams** with the device verification code (AES). Auto-detects
+  transport (**RTP**, **MPEG-PS**, MPEG-TS) and codec (**H.264** & **H.265/HEVC**) per camera —
+  no per-device configuration
 - 🟢 Auto-detects clear vs encrypted vs wrong-code per camera
 - ⚡ Optional **GPU (NVIDIA NVDEC)** decoding with software fallback
 - ♻️ 24/7 — auto-reconnect, periodic token refresh

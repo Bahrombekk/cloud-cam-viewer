@@ -96,6 +96,7 @@ class _NalDecryptBase:
         self.key = key.encode().ljust(16, b"\0")[:16]
         self._decrypt = None   # None=noma'lum, True=shifrli, False=toza
         self.key_error = False
+        self.codec = None      # 'h264' | 'hevc' | None
 
     def _decrypt_body(self, body) -> bytes:
         if not self._decrypt:  # None yoki False -> dekod qilmaymiz
@@ -167,14 +168,129 @@ class HevcRtpDecryptor(_NalDecryptBase):
         return bytes(out)
 
 
+class H264RtpDecryptor(_NalDecryptBase):
+    """RTP/H.264 paketlarini Annex-B ga aylantirib, NAL body ni dekodlaydi.
+    H.264 NAL header 1 bayt; FU-A=28, STAP-A=24, yagona NAL=1..23."""
+
+    # H.264 SPS body[0] = profile_idc (toza oqimda shu qiymatlardan biri)
+    _PROFILES = {66, 77, 88, 100, 110, 122, 244, 44, 83, 86, 118, 128}
+
+    def __init__(self, key: str):
+        super().__init__(key)
+        self._cur = None
+
+    def _detect(self, nal_type, body):  # override: H.264 SPS (tur 7)
+        if self._decrypt is not None or nal_type != 7 or len(body) < 16:
+            return
+        raw0 = body[0]
+        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
+        if raw0 in self._PROFILES:
+            self._decrypt = False
+        elif dec0 in self._PROFILES:
+            self._decrypt = True
+        else:
+            self.key_error = True
+
+    def _emit(self, out: bytearray, nal):  # override: 1 baytli NAL header
+        if len(nal) >= 1:
+            self._detect(nal[0] & 0x1F, nal[1:])
+            out += START + bytes(nal[:1]) + self._decrypt_body(nal[1:])
+
+    def feed(self, rtp_packet: bytes) -> bytes:
+        if (rtp_packet[1] & 0x7F) != HEVC_VIDEO_PT:
+            return b""
+        pl = rtp_payload(rtp_packet)
+        if len(pl) < 1:
+            return b""
+        out = bytearray()
+        t = pl[0] & 0x1F
+        if t == 28:  # FU-A — bo'lingan NAL
+            if len(pl) < 2:
+                return b""
+            fu = pl[1]
+            start_bit = fu >> 7
+            end_bit = (fu >> 6) & 1
+            fu_type = fu & 0x1F
+            if start_bit:
+                self._cur = bytearray([(pl[0] & 0xE0) | fu_type])
+                self._cur += pl[2:]
+            elif self._cur is not None:
+                self._cur += pl[2:]
+            if end_bit and self._cur is not None:
+                self._emit(out, self._cur)
+                self._cur = None
+        elif t == 24:  # STAP-A — bir paketda bir nechta NAL
+            i = 1
+            while i + 2 <= len(pl):
+                sz = int.from_bytes(pl[i:i + 2], "big")
+                i += 2
+                self._emit(out, pl[i:i + sz])
+                i += sz
+        else:  # yagona NAL (SPS/PPS/slice)
+            self._emit(out, pl)
+        return bytes(out)
+
+
+def detect_rtp_codec(payload0: int):
+    """RTP video payload birinchi baytidan codec: 'h264' | 'hevc' | None."""
+    h264_t = payload0 & 0x1F
+    hevc_t = (payload0 >> 1) & 0x3F
+    if hevc_t == 49 or payload0 in (0x40, 0x42, 0x44):
+        return "hevc"
+    if h264_t in (28, 24) or payload0 in (0x67, 0x68, 0x65):
+        return "h264"
+    if 1 <= hevc_t <= 40:
+        return "hevc"
+    return None
+
+
 class PsStreamDecryptor(_NalDecryptBase):
-    """MPEG-PS (HEVC) oqimini demux qilib, ES dagi NAL body larni dekodlaydi.
-    Kutubxonaning PS dekodlovchisi cheksiz video PES'da ishlamaydi, shuning uchun o'zimiz."""
+    """MPEG-PS oqimini demux qilib, ES dagi NAL body larni dekodlaydi.
+    H.264 va HEVC ni avtomatik aniqlaydi. (Kutubxona PS dekodlovchisi cheksiz
+    video PES'da ishlamaydi, shuning uchun o'zimiz.)"""
+
+    _PROFILES = {66, 77, 88, 100, 110, 122, 244, 44, 83, 86, 118, 128}
 
     def __init__(self, key: str):
         super().__init__(key)
         self._buf = bytearray()   # demux qilinmagan PS qoldig'i
-        self._es = bytearray()    # ajratilgan HEVC ES (NAL ga ajratilmagan qoldiq)
+        self._es = bytearray()    # ajratilgan ES (NAL ga ajratilmagan qoldiq)
+        self._hdr = 2             # NAL header o'lchami (codec aniqlangach o'rnatiladi)
+
+    def _emit(self, out: bytearray, nal) -> None:  # override: codec-aware
+        if not nal:
+            return
+        b0 = nal[0]
+        if self.codec is None:  # param-set NAL dan codec aniqlash
+            if b0 in (0x40, 0x42, 0x44):       # HEVC VPS/SPS/PPS
+                self.codec, self._hdr = "hevc", 2
+            elif b0 in (0x67, 0x68):           # H.264 SPS/PPS
+                self.codec, self._hdr = "h264", 1
+            else:
+                return  # codec hali noma'lum (slice) -> o'tkazib yuboramiz
+        hdr = self._hdr
+        if len(nal) < hdr:
+            return
+        if self._decrypt is None:
+            self._detect_ps(b0, nal[hdr:])
+        out += START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
+
+    def _detect_ps(self, b0, body):
+        # Faqat param-set NAL (HEVC VPS=0x40 / H.264 SPS=0x67) orqali aniqlaymiz
+        if len(body) < 16 or not ((self.codec == "hevc" and b0 == 0x40) or
+                                   (self.codec == "h264" and b0 == 0x67)):
+            return
+        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
+        if self.codec == "hevc":
+            clear, dec = (body[0] == 0x0C), (dec0 == 0x0C)
+        else:
+            clear, dec = (body[0] in self._PROFILES), (dec0 in self._PROFILES)
+        if clear:
+            self._decrypt = False
+        elif dec:
+            self._decrypt = True
+        else:
+            self.key_error = True
 
     def _demux(self):
         """PS dan video PES (0xE0-EF) payload'larini ajratib _es ga qo'shadi."""
@@ -321,18 +437,46 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                 with stream_cm as stream:
                     stream.start()
                     pkts = stream.iter_packets()
-                    first = next(pkts, None)
-                    if first is None:
+                    # Format (RTP/PS) va codec (H.264/HEVC) ni aniqlash uchun
+                    # boshlang'ich paketlarni o'qiymiz (keyin ularni ham uzatamiz)
+                    buffered = []
+                    is_rtp = None
+                    codec = None
+                    for pkt in pkts:
+                        b = bytes(pkt.body)
+                        buffered.append(b)
+                        if is_rtp is None:
+                            is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
+                        if not is_rtp:
+                            break  # MPEG-PS
+                        if (b[1] & 0x7F) == HEVC_VIDEO_PT:
+                            pl = rtp_payload(b)
+                            if len(pl) >= 1:
+                                codec = detect_rtp_codec(pl[0])
+                                if codec:
+                                    break
+                        if len(buffered) >= 60:
+                            break
+                    if not buffered:
                         self.send_error(502)
                         return
-                    body0 = bytes(first.body)
-                    is_rtp = len(body0) >= 1 and (body0[0] >> 6) == 2  # RTP v2
-                    # Ikkala format ham Annex-B HEVC chiqaradi (shifr avtomatik aniqlanadi)
-                    dec = HevcRtpDecryptor(key) if is_rtp else PsStreamDecryptor(key)
-                    transform = dec.feed
-                    keyerr = lambda: dec.key_error
 
-                    ff = _open_mpegts_remux_process("ffmpeg", input_format="hevc")
+                    if not is_rtp and buffered[0][:1] == b"\x47":
+                        # MPEG-TS — ffmpeg o'zi demux qiladi (har qanday codec, shifrsiz)
+                        transform = lambda b: b
+                        keyerr = lambda: False
+                        infmt = "mpegts"
+                    elif not is_rtp:
+                        dec = PsStreamDecryptor(key)        # MPEG-PS (H.264/HEVC avto)
+                        transform = dec.feed; keyerr = lambda: dec.key_error; infmt = "hevc"
+                    elif codec == "h264":
+                        dec = H264RtpDecryptor(key)         # RTP/H.264
+                        transform = dec.feed; keyerr = lambda: dec.key_error; infmt = "h264"
+                    else:
+                        dec = HevcRtpDecryptor(key)         # RTP/HEVC
+                        transform = dec.feed; keyerr = lambda: dec.key_error; infmt = "hevc"
+
+                    ff = _open_mpegts_remux_process("ffmpeg", input_format=infmt)
                     self.send_response(200)
                     self.send_header("Content-Type", "video/MP2T")
                     self.send_header("Cache-Control", "no-store")
@@ -340,10 +484,10 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
 
                     def pump():
                         try:
-                            for pkt in chain([first], pkts):
+                            for body in chain(buffered, (bytes(p.body) for p in pkts)):
                                 if stop["v"]:
                                     break
-                                data = transform(bytes(pkt.body))
+                                data = transform(body)
                                 if keyerr():
                                     _flag_keyerror()
                                     break
