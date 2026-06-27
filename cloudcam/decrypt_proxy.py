@@ -109,13 +109,15 @@ class _NalDecryptBase:
 
     def _detect(self, nal_type: int, body) -> None:
         """VPS (tur 32) orqali: toza HEVC VPS body 0x0c bilan boshlanadi; shifrli=tasodifiy."""
-        if self._decrypt is not None or nal_type != 32 or len(body) < 16:
+        if self._decrypt is not None or nal_type != 32 or len(body) < 1:
             return
-        raw0 = body[0]
+        if body[0] == 0x0C:                 # toza — qisqa VPS uchun ham
+            self._decrypt = False
+            return
+        if len(body) < 16:                  # AES tekshiruvi uchun 1 blok kerak
+            return
         dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-        if raw0 == 0x0C:
-            self._decrypt = False           # allaqachon toza
-        elif dec0 == 0x0C:
+        if dec0 == 0x0C:
             self._decrypt = True            # dekod kerak, kod to'g'ri
         else:
             self.key_error = True           # na toza na to'g'ri dekod -> kod xato
@@ -182,13 +184,15 @@ class H264RtpDecryptor(_NalDecryptBase):
         self._cur = None
 
     def _detect(self, nal_type, body):  # override: H.264 SPS (tur 7)
-        if self._decrypt is not None or nal_type != 7 or len(body) < 16:
+        if self._decrypt is not None or nal_type != 7 or len(body) < 1:
             return
-        raw0 = body[0]
-        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-        if raw0 in self._PROFILES:
+        if body[0] in self._PROFILES:   # toza (profile_idc ko'rinadi) — qisqa SPS uchun ham
             self._decrypt = False
-        elif dec0 in self._PROFILES:
+            return
+        if len(body) < 16:              # AES tekshiruvi uchun 1 blok kerak
+            return
+        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
+        if dec0 in self._PROFILES:
             self._decrypt = True
         else:
             self.key_error = True
@@ -283,17 +287,18 @@ class PsStreamDecryptor(_NalDecryptBase):
 
     def _detect_ps(self, b0, body):
         # Faqat param-set NAL (HEVC VPS=0x40 / H.264 SPS=0x67) orqali aniqlaymiz
-        if len(body) < 16 or not ((self.codec == "hevc" and b0 == 0x40) or
-                                   (self.codec == "h264" and b0 == 0x67)):
+        if len(body) < 1 or not ((self.codec == "hevc" and b0 == 0x40) or
+                                  (self.codec == "h264" and b0 == 0x67)):
+            return
+        clear_marker = (body[0] == 0x0C) if self.codec == "hevc" else (body[0] in self._PROFILES)
+        if clear_marker:                    # toza — qisqa param-set uchun ham
+            self._decrypt = False
+            return
+        if len(body) < 16:                  # AES tekshiruvi uchun 1 blok kerak
             return
         dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-        if self.codec == "hevc":
-            clear, dec = (body[0] == 0x0C), (dec0 == 0x0C)
-        else:
-            clear, dec = (body[0] in self._PROFILES), (dec0 in self._PROFILES)
-        if clear:
-            self._decrypt = False
-        elif dec:
+        dec_marker = (dec0 == 0x0C) if self.codec == "hevc" else (dec0 in self._PROFILES)
+        if dec_marker:
             self._decrypt = True
         else:
             self.key_error = True
