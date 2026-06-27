@@ -240,16 +240,20 @@ class H264RtpDecryptor(_NalDecryptBase):
 
 
 def detect_rtp_codec(payload0: int):
-    """RTP video payload birinchi baytidan codec: 'h264' | 'hevc' | None."""
+    """RTP video payload birinchi baytidan codec: 'h264' | 'hevc' | None.
+    Faqat ANIQ markerlar (FU yoki param-set) bo'yicha; noaniq (oddiy slice)
+    paketda None qaytaramiz -> chaqiruvchi keyingi paketni tekshiradi."""
     h264_t = payload0 & 0x1F
     hevc_t = (payload0 >> 1) & 0x3F
-    if hevc_t == 49 or payload0 in (0x40, 0x42, 0x44):
-        return "hevc"
+    # Aniq H.264: FU-A=28, STAP-A=24, SPS=0x67, PPS=0x68, IDR=0x65
     if h264_t in (28, 24) or payload0 in (0x67, 0x68, 0x65):
         return "h264"
-    if 1 <= hevc_t <= 40:
+    # Aniq HEVC: FU=49, AP=48, VPS=0x40, SPS=0x42, PPS=0x44
+    # (HEVC IDR 0x26/0x28 ishlatilmaydi — H.264 SEI/PPS bilan to'qnashadi;
+    #  HEVC IDR baribir katta -> FU=49 orqali aniqlanadi)
+    if hevc_t in (49, 48) or payload0 in (0x40, 0x42, 0x44):
         return "hevc"
-    return None
+    return None  # noaniq
 
 
 class PsStreamDecryptor(_NalDecryptBase):
@@ -464,7 +468,8 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                                 codec = detect_rtp_codec(pl[0])
                                 if codec:
                                     break
-                        if len(buffered) >= 60:
+                        # keyframe/aniq marker kelguncha skanerlaymiz (uzun GOP uchun)
+                        if len(buffered) >= 400:
                             break
                     if not buffered:
                         self.send_error(502)
