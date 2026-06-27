@@ -77,6 +77,10 @@ class CameraStream:
         return os.path.join(tempfile.gettempdir(),
                             f"ezviz_keyerr_{self.serial}_{self.channel}.flag")
 
+    def _offline_path(self):
+        return os.path.join(tempfile.gettempdir(),
+                            f"ezviz_offline_{self.serial}_{self.channel}.flag")
+
     def _project_root(self):
         # cloudcam/ ning ota-papkasi = loyiha ildizi
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -89,11 +93,12 @@ class CameraStream:
     def _start_proxy(self):
         if self.proxy_proc:
             self.proxy_proc.terminate()
-        # eski kod-xato bayrog'ini tozalaymiz (yangi urinish)
-        try:
-            os.remove(self._keyerr_path())
-        except OSError:
-            pass
+        # eski bayroqlarni tozalaymiz (yangi urinish)
+        for p in (self._keyerr_path(), self._offline_path()):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
         python = self._python_exe()
         if self.decrypt and self.key:
             # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan)
@@ -200,6 +205,14 @@ class CameraStream:
                     self.connected = False
                     break  # qayta urinish foydasiz (kod baribir xato)
 
+                # Kamera OFFLINE (VTM ma'lumot bermadi) — proxy bayroq qo'ygan
+                if os.path.exists(self._offline_path()):
+                    self.error = "OFFLINE (kamera o'chiq yoki signal yo'q)"
+                    self.connected = False
+                    time.sleep(min(backoff, 15))
+                    backoff = min(backoff * 2, 15)
+                    continue
+
                 # GPU bilan 0 kadr olindi -> NVDEC ishlamayapti, dasturiyga o'tamiz
                 if frames_this_attempt == 0 and self._use_gpu:
                     self._use_gpu = False
@@ -207,7 +220,7 @@ class CameraStream:
                 # Bo'sh kanal (kamera ulanmagan) ni aniqlash: ketma-ket kadrsiz urinishlar
                 if frames_this_attempt > 0:
                     self._consec_empty = 0
-                    if self.error and "Signal" in self.error:
+                    if self.error and ("Signal" in self.error or "OFFLINE" in self.error):
                         self.error = None  # kamera qaytib keldi
                 else:
                     self._consec_empty += 1

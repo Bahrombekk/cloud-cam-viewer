@@ -89,6 +89,11 @@ def keyerror_flag_path(serial: str, channel: int = 1) -> str:
     return os.path.join(tempfile.gettempdir(), f"ezviz_keyerr_{serial}_{channel}.flag")
 
 
+def offline_flag_path(serial: str, channel: int = 1) -> str:
+    """Kamera offline (VTM ma'lumot bermayapti) bo'lganda bayroq fayl yo'li."""
+    return os.path.join(tempfile.gettempdir(), f"ezviz_offline_{serial}_{channel}.flag")
+
+
 class _NalDecryptBase:
     """HEVC NAL body ni AES-ECB bilan dekodlash + VPS orqali shifrni avtomatik aniqlash."""
 
@@ -432,6 +437,13 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
         except Exception:
             pass
 
+    def _flag_offline():
+        try:
+            with open(offline_flag_path(serial, channel), "w") as fl:
+                fl.write("1")
+        except Exception:
+            pass
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -443,7 +455,9 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
             try:
                 stream_cm = open_cloud_stream(client, serial, channel=channel,
                                               client_type=9, refresh_vtm=False, timeout=20.0)
-            except Exception:
+            except Exception as e:
+                if "offline" in str(e).lower() or "unreachable" in str(e).lower():
+                    _flag_offline()
                 self.send_error(502)
                 return
             try:
@@ -502,8 +516,9 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                             self.wfile.write(data)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
-            except Exception:
-                pass
+            except Exception as e:
+                if "offline" in str(e).lower() or "unreachable" in str(e).lower():
+                    _flag_offline()
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
