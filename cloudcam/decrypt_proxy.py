@@ -272,51 +272,84 @@ class PsStreamDecryptor(_NalDecryptBase):
         super().__init__(key)
         self._buf = bytearray()   # demux qilinmagan PS qoldig'i
         self._es = bytearray()    # ajratilgan ES (NAL ga ajratilmagan qoldiq)
-        self._hdr = 2             # NAL header o'lchami (codec aniqlangach o'rnatiladi)
+        self._enc_off = None      # shifr boshlanish offseti: 0=butun NAL, 1=H.264, 2=HEVC header'dan keyin
+        self._pending = []        # aniqlanmaguncha NAL larni vaqtincha saqlaymiz
 
-    def _emit(self, out: bytearray, nal) -> None:  # override: codec-aware
+    def _emit(self, out: bytearray, nal) -> None:  # override: codec/variant-aware
         if not nal:
             return
-        if self.codec is None or self._decrypt is None:
-            self._detect_ps(nal)            # codec + shifrni param-set orqali aniqlaydi
-            if self.codec is None or self._decrypt is None:
-                return  # aniqlanmaguncha garbage chiqarmaymiz
-        hdr = self._hdr
-        if len(nal) < hdr:
+        if self._decrypt is None:                 # codec/shifr hali aniqlanmagan
+            self._pending.append(bytes(nal))
+            res = self._decide(self._pending)
+            if res == "keyerror":
+                self.key_error = True
+                self._pending = []
+                return
+            if res is None:
+                return                            # aniqlanmaguncha garbage chiqarmaymiz
+            self.codec, self._enc_off, self._decrypt = res
+            for n in self._pending:               # yig'ilgan NAL larni chiqaramiz
+                self._write_nal(out, n)
+            self._pending = []
             return
-        out += START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
+        self._write_nal(out, nal)
 
-    def _detect_ps(self, nal):
-        """Param-set NAL orqali codec + shifrni aniqlaydi — NRI bitlaridan QAT'I NAZAR
-        (NAL turini ishlatadi: H.264 SPS=tur 7, HEVC VPS=tur 32). Body markeri bilan
-        tasdiqlanadi: HEVC VPS body[0]==0x0C, H.264 SPS body[0]=profile_idc."""
-        b0 = nal[0]
-        hevc_t = (b0 >> 1) & 0x3F   # HEVC NAL turi
-        h264_t = b0 & 0x1F          # H.264 NAL turi (NRI ajratilgan)
-        # --- HEVC VPS nomzodi (tur 32; bayt 0x40/0x41) ---
-        if self.codec in (None, "hevc") and hevc_t == 32 and len(nal) >= 3:
-            body = nal[2:]
-            if body and body[0] == 0x0C:                 # toza
-                self.codec, self._hdr, self._decrypt = "hevc", 2, False
-            elif len(body) >= 16:
-                dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-                if dec0 == 0x0C:                         # shifrli, kod to'g'ri
-                    self.codec, self._hdr, self._decrypt = "hevc", 2, True
-                else:                                    # VPS topildi, marker yo'q -> kod xato
-                    self.codec, self._hdr, self.key_error = "hevc", 2, True
+    def _write_nal(self, out: bytearray, nal) -> None:
+        off = self._enc_off
+        if len(nal) <= off:
+            out += START + bytes(nal)
             return
-        # --- H.264 SPS nomzodi (tur 7; bayt 0x07/0x27/0x47/0x67) ---
-        if self.codec in (None, "h264") and h264_t == 7 and len(nal) >= 2:
-            body = nal[1:]
-            if body and body[0] in self._PROFILES:       # toza
-                self.codec, self._hdr, self._decrypt = "h264", 1, False
-            elif len(body) >= 16:
-                dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-                if dec0 in self._PROFILES:               # shifrli, kod to'g'ri
-                    self.codec, self._hdr, self._decrypt = "h264", 1, True
-                else:                                    # SPS topildi, profil yo'q -> kod xato
-                    self.codec, self._hdr, self.key_error = "h264", 1, True
-            return
+        # off=0 -> butun NAL shifrli (header ham); aks holda header toza, body shifrli
+        out += START + bytes(nal[:off]) + self._decrypt_body(nal[off:])
+
+    def _aes16(self, data) -> bytes:
+        return AES.new(self.key, AES.MODE_ECB).decrypt(bytes(data[:16]))
+
+    @staticmethod
+    def _h264_valid(b: int) -> bool:
+        return (b & 0x80) == 0 and (b & 0x1F) in (1, 5, 6, 7, 8, 9)
+
+    @staticmethod
+    def _hevc_valid(b: int) -> bool:
+        return (b & 0x80) == 0 and ((b >> 1) & 0x3F) in (0, 1, 2, 4, 19, 20, 21, 32, 33, 34, 39, 40)
+
+    def _corrob(self, big, decoded) -> bool:
+        """Talqinni tasdiqlash: namunadagi NAL header (yoki deshifrlangan header) larining
+        ko'pi shu codec uchun haqiqiymi (yagona soxta moslikdan himoya)."""
+        hits = sum(decoded)
+        return hits >= max(2, len(big) // 2)
+
+    def _decide(self, nals):
+        """Yig'ilgan NAL lardan codec + shifr offseti + shifrli/toza ni aniqlaydi. 4 talqin:
+        header toza (A, off=hdr) yoki butun NAL shifrli (B, off=0), H.264 yoki HEVC.
+        SPS(H.264)/VPS(HEVC) ni topib body markeri bilan tasdiqlaydi (NRI'dan qat'i nazar).
+        Qaytaradi: (codec, enc_off, decrypt) | 'keyerror' | None."""
+        big = [n for n in nals if len(n) >= 18]
+        if len(big) < 3:
+            return None
+        PROF = self._PROFILES
+        decB = [self._aes16(n) for n in big]      # variant B: butun NAL deshifrlangan boshi
+        for i, n in enumerate(big):
+            # --- A) header TOZA, body shifrli/toza ---
+            if (n[0] & 0x80) == 0 and (n[0] & 0x1F) == 7:           # H.264 SPS
+                if n[1] in PROF and self._corrob(big, [self._h264_valid(m[0]) for m in big]):
+                    return ("h264", 1, False)                       # toza oqim
+                if self._aes16(n[1:17])[0] in PROF and self._corrob(big, [self._h264_valid(m[0]) for m in big]):
+                    return ("h264", 1, True)
+            if (n[0] & 0x80) == 0 and ((n[0] >> 1) & 0x3F) == 32:   # HEVC VPS
+                if n[2] == 0x0C and self._corrob(big, [self._hevc_valid(m[0]) for m in big]):
+                    return ("hevc", 2, False)                       # toza oqim
+                if self._aes16(n[2:18])[0] == 0x0C and self._corrob(big, [self._hevc_valid(m[0]) for m in big]):
+                    return ("hevc", 2, True)
+            # --- B) BUTUN NAL shifrli (header ham) ---
+            d = decB[i]
+            if (d[0] & 0x1F) == 7 and d[1] in PROF and self._corrob(big, [self._h264_valid(x[0]) for x in decB]):
+                return ("h264", 0, True)
+            if ((d[0] >> 1) & 0x3F) == 32 and d[2] == 0x0C and self._corrob(big, [self._hevc_valid(x[0]) for x in decB]):
+                return ("hevc", 0, True)
+        if len(big) >= 24:        # yetarli NAL bor, lekin hech narsa mos kelmadi -> kod xato
+            return "keyerror"
+        return None
 
     def _demux(self):
         """PS dan video PES (0xE0-EF) payload'larini ajratib _es ga qo'shadi."""
