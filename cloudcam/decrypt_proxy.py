@@ -407,10 +407,39 @@ def _make_client():
     return client
 
 
+def _device_names(client):
+    """{serial: qurilma_nomi} — ilovadagi nomlar (NVR/kamera nomi)."""
+    tok = getattr(client, "_token", {}) or {}
+    api = tok.get("api_url")
+    sess = _rq.Session()
+    sess.headers.update({
+        "clientType": _CLIENT_TYPE, "lang": "en-US",
+        "featureCode": "1fc28fa018178a1cd1c091b13b2f9f02",
+        "sessionId": str(tok.get("session_id")),
+    })
+    names = {}
+    offset = 0
+    for _ in range(40):
+        r = sess.get(f"https://{api}/v3/userdevices/v1/devices/pagelist",
+                     params={"filter": "CONNECTION", "groupId": -1, "limit": 50, "offset": offset},
+                     timeout=25)
+        d = r.json()
+        di = d.get("deviceInfos") or []
+        for x in di:
+            names[x.get("deviceSerial")] = (x.get("name") or "").strip()
+        page = d.get("page") or {}
+        if not di or not page.get("hasNext"):
+            break
+        offset += len(di)
+    return names
+
+
 def list_cameras(client=None):
     """Haqiqiy kameralar ro'yxati: [(serial, channel, name)].
+    Nom = "Qurilma nomi — Kanal nomi" (ilovadagi nom bilan moslash uchun).
     VTM resurslaridan olinadi — bo'sh NVR kanallari (kamera ulanmagan) ko'rsatilmaydi."""
     client = client or _make_client()
+    dev_names = _device_names(client)
     res = _cs.get_vtm_page_list(client).get("resourceInfos", []) or []
     cams = []
     for r in res:
@@ -421,8 +450,13 @@ def list_cameras(client=None):
         if ch < 1:  # localIndex 0 = qurilma (NVR) o'zi, kamera emas
             continue
         serial = r.get("deviceSerial")
-        name = (r.get("resourceName") or f"{serial} CH{ch}").strip()
-        cams.append((serial, ch, name))
+        chname = (r.get("resourceName") or "").strip()
+        devname = dev_names.get(serial, "")
+        if devname and chname and devname.lower() not in chname.lower():
+            label = f"{devname} — {chname}"
+        else:
+            label = chname or devname or f"{serial} CH{ch}"
+        cams.append((serial, ch, label))
     cams.sort(key=lambda x: (x[0], x[1]))
     return cams
 
