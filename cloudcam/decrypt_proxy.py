@@ -103,6 +103,11 @@ class _NalDecryptBase:
     """
 
     _PROFILES = {66, 77, 88, 100, 110, 122, 244, 44, 83, 86, 118, 128}  # H.264 profile_idc
+    # SELEKTIV shifr: kameralar faqat I-freym/IRAP + param-set NAL larini shifrlaydi,
+    # inter (P/B) slice larni toza qoldiradi. Variant A (header toza) da turi shu ro'yxatda
+    # bo'lsa deshifrlaymiz; B-hint da ko'rsatkich orqali aniqlanadi (ro'yxat kerak emas).
+    _H264_ENC_TYPES = {5, 7, 8}                              # IDR, SPS, PPS
+    _HEVC_ENC_TYPES = {16, 17, 18, 19, 20, 21, 32, 33, 34}   # IRAP slices + VPS/SPS/PPS
 
     def __init__(self, key: str):
         self.key = key.encode().ljust(16, b"\0")[:16]
@@ -156,10 +161,38 @@ class _NalDecryptBase:
             self.key_error = True
 
     def _emit_nal(self, out, nal) -> None:
-        if self._decrypt is None or len(nal) <= self._clear + self._drop:
-            return  # aniqlanmaguncha yoki juda qisqa -> chiqarmaymiz
-        payload = nal[self._clear + self._drop:]
-        out += START + bytes(nal[:self._clear]) + self._decrypt_body(payload)
+        if self._decrypt is None:
+            return  # shifr aniqlanmaguncha chiqarmaymiz
+        if not self._decrypt:                       # toza oqim
+            out += START + bytes(nal)
+            return
+        if self._drop:
+            # B-hint + SELEKTIV shifr (har NAL alohida). I-freym/param-set NAL larida
+            # toza tur-ko'rsatkich (dublikat header) bor: shifrli bo'lsa AES deshifr header'ga
+            # mos keladi; juda qisqa (PPS) bo'lsa AESsiz dublikat header. P-freym ko'rsatkichsiz.
+            hdr = self._drop
+            if len(nal) >= hdr + 16 and self._aes16(nal[hdr:hdr + 16])[:hdr] == bytes(nal[:hdr]):
+                out += START + self._decrypt_body(nal[hdr:])   # shifrli -> deshifr = to'liq NAL
+            elif len(nal) >= 2 * hdr and bytes(nal[hdr:2 * hdr]) == bytes(nal[:hdr]):
+                out += START + bytes(nal[hdr:])                 # toza, dublikat ko'rsatkich -> tashlash
+            else:
+                out += START + bytes(nal)                       # oddiy toza NAL (P-freym)
+            return
+        # A (header toza, body shifrli) yoki B-whole (butun NAL shifrli)
+        hdr = self._clear
+        if hdr == 0:                                    # B-whole: butun NAL deshifr
+            out += START + self._decrypt_body(nal)
+            return
+        if len(nal) <= hdr:
+            out += START + bytes(nal)
+            return
+        # variant A + SELEKTIV: faqat kalit NAL turini deshifrlaymiz, inter slice toza
+        ntype = (nal[0] & 0x1F) if hdr == 1 else ((nal[0] >> 1) & 0x3F)
+        enc = self._H264_ENC_TYPES if hdr == 1 else self._HEVC_ENC_TYPES
+        if ntype in enc:
+            out += START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
+        else:
+            out += START + bytes(nal)                   # inter (P/B) slice — toza
 
     def _emit(self, out: bytearray, nal) -> None:  # HEVC RTP (2 baytli NAL header, VPS=tur 32)
         if len(nal) < 2:
