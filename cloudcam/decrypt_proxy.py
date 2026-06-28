@@ -95,13 +95,25 @@ def offline_flag_path(serial: str, channel: int = 1) -> str:
 
 
 class _NalDecryptBase:
-    """HEVC NAL body ni AES-ECB bilan dekodlash + VPS orqali shifrni avtomatik aniqlash."""
+    """NAL body ni AES-ECB bilan dekodlash + param-set (SPS/VPS) orqali shifr turini avtomatik
+    aniqlash. UCH shifr varianti qo'llanadi (clear/drop offsetlari bilan):
+      A)       header TOZA, body shifrli/toza                 -> clear=hdr, drop=0
+      B-hint)  toza tur-ko'rsatkichi + shifrlangan TO'LIQ NAL  -> clear=0,   drop=hdr
+      B-whole) butun NAL shifrli (ko'rsatkichsiz, PS uchun)    -> clear=0,   drop=0
+    """
+
+    _PROFILES = {66, 77, 88, 100, 110, 122, 244, 44, 83, 86, 118, 128}  # H.264 profile_idc
 
     def __init__(self, key: str):
         self.key = key.encode().ljust(16, b"\0")[:16]
         self._decrypt = None   # None=noma'lum, True=shifrli, False=toza
         self.key_error = False
         self.codec = None      # 'h264' | 'hevc' | None
+        self._clear = 0        # boshidagi toza (dekodlanmaydigan) baytlar
+        self._drop = 0         # boshidan tashlanadigan (toza tur-ko'rsatkich) baytlar
+
+    def _aes16(self, data) -> bytes:
+        return AES.new(self.key, AES.MODE_ECB).decrypt(bytes(data[:16]))
 
     def _decrypt_body(self, body) -> bytes:
         if not self._decrypt:  # None yoki False -> dekod qilmaymiz
@@ -112,27 +124,48 @@ class _NalDecryptBase:
         head = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:n]))
         return head + bytes(body[n:])
 
-    def _detect(self, nal_type: int, body) -> None:
-        """VPS (tur 32) orqali: toza HEVC VPS body 0x0c bilan boshlanadi; shifrli=tasodifiy."""
-        if self._decrypt is not None or nal_type != 32 or len(body) < 1:
+    def _classify(self, nal, hdr, is_paramset, body_marker) -> None:
+        """Param-set NAL orqali shifr variantini aniqlaydi (clear/drop/decrypt ni o'rnatadi).
+        is_paramset(b0)->bool: tur (SPS=7 / VPS=32) to'g'rimi; body_marker(byte)->bool:
+        deshifrlangan/toza body boshi to'g'rimi (H.264 profile_idc / HEVC 0x0C)."""
+        if self._decrypt is not None:
             return
-        if body[0] == 0x0C:                 # toza — qisqa VPS uchun ham
-            self._decrypt = False
-            return
-        if len(body) < 16:                  # AES tekshiruvi uchun 1 blok kerak
-            return
-        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-        if dec0 == 0x0C:
-            self._decrypt = True            # dekod kerak, kod to'g'ri
-        else:
-            self.key_error = True           # na toza na to'g'ri dekod -> kod xato
+        b0 = nal[0]
+        ps = is_paramset(b0)
+        # A) header toza
+        if ps and len(nal) > hdr and body_marker(nal[hdr]):
+            self._clear, self._drop, self._decrypt = hdr, 0, False
+            return                                              # toza oqim
+        if ps and len(nal) >= hdr + 16 and body_marker(self._aes16(nal[hdr:hdr + 16])[0]):
+            self._clear, self._drop, self._decrypt = hdr, 0, True
+            return                                              # header toza, body shifrli
+        # B-hint) toza tur-ko'rsatkich + shifrlangan to'liq NAL (header ham shifr ichida)
+        if len(nal) >= hdr + 16:
+            dec = self._aes16(nal[hdr:hdr + 16])
+            if is_paramset(dec[0]) and len(dec) > hdr and body_marker(dec[hdr]):
+                self._clear, self._drop, self._decrypt = 0, hdr, True
+                return
+        # B-whole) butun NAL shifrli, ko'rsatkichsiz
+        if len(nal) >= 16:
+            dec = self._aes16(nal[:16])
+            if is_paramset(dec[0]) and len(dec) > hdr and body_marker(dec[hdr]):
+                self._clear, self._drop, self._decrypt = 0, 0, True
+                return
+        # toza header param-set ko'rinadi-yu hech variant mos kelmasa -> kod xato
+        if ps and len(nal) >= hdr + 16:
+            self.key_error = True
 
-    def _emit(self, out: bytearray, nal) -> None:
-        if len(nal) >= 2:
-            self._detect((nal[0] >> 1) & 0x3F, nal[2:])
-            if self._decrypt is None:
-                return  # shifr aniqlanmaguncha (VPS'gacha) garbage chiqarmaymiz
-            out += START + bytes(nal[:2]) + self._decrypt_body(nal[2:])
+    def _emit_nal(self, out, nal) -> None:
+        if self._decrypt is None or len(nal) <= self._clear + self._drop:
+            return  # aniqlanmaguncha yoki juda qisqa -> chiqarmaymiz
+        payload = nal[self._clear + self._drop:]
+        out += START + bytes(nal[:self._clear]) + self._decrypt_body(payload)
+
+    def _emit(self, out: bytearray, nal) -> None:  # HEVC RTP (2 baytli NAL header, VPS=tur 32)
+        if len(nal) < 2:
+            return
+        self._classify(nal, 2, lambda b: ((b >> 1) & 0x3F) == 32, lambda x: x == 0x0C)
+        self._emit_nal(out, nal)
 
 
 class HevcRtpDecryptor(_NalDecryptBase):
@@ -181,33 +214,15 @@ class H264RtpDecryptor(_NalDecryptBase):
     """RTP/H.264 paketlarini Annex-B ga aylantirib, NAL body ni dekodlaydi.
     H.264 NAL header 1 bayt; FU-A=28, STAP-A=24, yagona NAL=1..23."""
 
-    # H.264 SPS body[0] = profile_idc (toza oqimda shu qiymatlardan biri)
-    _PROFILES = {66, 77, 88, 100, 110, 122, 244, 44, 83, 86, 118, 128}
-
     def __init__(self, key: str):
         super().__init__(key)
         self._cur = None
 
-    def _detect(self, nal_type, body):  # override: H.264 SPS (tur 7)
-        if self._decrypt is not None or nal_type != 7 or len(body) < 1:
+    def _emit(self, out: bytearray, nal):  # override: 1 baytli NAL header, SPS=tur 7
+        if len(nal) < 1:
             return
-        if body[0] in self._PROFILES:   # toza (profile_idc ko'rinadi) — qisqa SPS uchun ham
-            self._decrypt = False
-            return
-        if len(body) < 16:              # AES tekshiruvi uchun 1 blok kerak
-            return
-        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-        if dec0 in self._PROFILES:
-            self._decrypt = True
-        else:
-            self.key_error = True
-
-    def _emit(self, out: bytearray, nal):  # override: 1 baytli NAL header
-        if len(nal) >= 1:
-            self._detect(nal[0] & 0x1F, nal[1:])
-            if self._decrypt is None:
-                return  # shifr aniqlanmaguncha (SPS'gacha) garbage chiqarmaymiz
-            out += START + bytes(nal[:1]) + self._decrypt_body(nal[1:])
+        self._classify(nal, 1, lambda b: (b & 0x1F) == 7, lambda x: x in self._PROFILES)
+        self._emit_nal(out, nal)
 
     def feed(self, rtp_packet: bytes) -> bytes:
         if (rtp_packet[1] & 0x7F) != HEVC_VIDEO_PT:
