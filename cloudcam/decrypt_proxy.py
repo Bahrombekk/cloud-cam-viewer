@@ -277,40 +277,46 @@ class PsStreamDecryptor(_NalDecryptBase):
     def _emit(self, out: bytearray, nal) -> None:  # override: codec-aware
         if not nal:
             return
-        b0 = nal[0]
-        if self.codec is None:  # param-set NAL dan codec aniqlash
-            if b0 in (0x40, 0x42, 0x44):       # HEVC VPS/SPS/PPS
-                self.codec, self._hdr = "hevc", 2
-            elif b0 in (0x67, 0x68):           # H.264 SPS/PPS
-                self.codec, self._hdr = "h264", 1
-            else:
-                return  # codec hali noma'lum (slice) -> o'tkazib yuboramiz
+        if self.codec is None or self._decrypt is None:
+            self._detect_ps(nal)            # codec + shifrni param-set orqali aniqlaydi
+            if self.codec is None or self._decrypt is None:
+                return  # aniqlanmaguncha garbage chiqarmaymiz
         hdr = self._hdr
         if len(nal) < hdr:
             return
-        if self._decrypt is None:
-            self._detect_ps(b0, nal[hdr:])
-        if self._decrypt is None:
-            return  # shifr aniqlanmaguncha garbage chiqarmaymiz
         out += START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
 
-    def _detect_ps(self, b0, body):
-        # Faqat param-set NAL (HEVC VPS=0x40 / H.264 SPS=0x67) orqali aniqlaymiz
-        if len(body) < 1 or not ((self.codec == "hevc" and b0 == 0x40) or
-                                  (self.codec == "h264" and b0 == 0x67)):
+    def _detect_ps(self, nal):
+        """Param-set NAL orqali codec + shifrni aniqlaydi — NRI bitlaridan QAT'I NAZAR
+        (NAL turini ishlatadi: H.264 SPS=tur 7, HEVC VPS=tur 32). Body markeri bilan
+        tasdiqlanadi: HEVC VPS body[0]==0x0C, H.264 SPS body[0]=profile_idc."""
+        b0 = nal[0]
+        hevc_t = (b0 >> 1) & 0x3F   # HEVC NAL turi
+        h264_t = b0 & 0x1F          # H.264 NAL turi (NRI ajratilgan)
+        # --- HEVC VPS nomzodi (tur 32; bayt 0x40/0x41) ---
+        if self.codec in (None, "hevc") and hevc_t == 32 and len(nal) >= 3:
+            body = nal[2:]
+            if body and body[0] == 0x0C:                 # toza
+                self.codec, self._hdr, self._decrypt = "hevc", 2, False
+            elif len(body) >= 16:
+                dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
+                if dec0 == 0x0C:                         # shifrli, kod to'g'ri
+                    self.codec, self._hdr, self._decrypt = "hevc", 2, True
+                else:                                    # VPS topildi, marker yo'q -> kod xato
+                    self.codec, self._hdr, self.key_error = "hevc", 2, True
             return
-        clear_marker = (body[0] == 0x0C) if self.codec == "hevc" else (body[0] in self._PROFILES)
-        if clear_marker:                    # toza — qisqa param-set uchun ham
-            self._decrypt = False
+        # --- H.264 SPS nomzodi (tur 7; bayt 0x07/0x27/0x47/0x67) ---
+        if self.codec in (None, "h264") and h264_t == 7 and len(nal) >= 2:
+            body = nal[1:]
+            if body and body[0] in self._PROFILES:       # toza
+                self.codec, self._hdr, self._decrypt = "h264", 1, False
+            elif len(body) >= 16:
+                dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
+                if dec0 in self._PROFILES:               # shifrli, kod to'g'ri
+                    self.codec, self._hdr, self._decrypt = "h264", 1, True
+                else:                                    # SPS topildi, profil yo'q -> kod xato
+                    self.codec, self._hdr, self.key_error = "h264", 1, True
             return
-        if len(body) < 16:                  # AES tekshiruvi uchun 1 blok kerak
-            return
-        dec0 = AES.new(self.key, AES.MODE_ECB).decrypt(bytes(body[:16]))[0]
-        dec_marker = (dec0 == 0x0C) if self.codec == "hevc" else (dec0 in self._PROFILES)
-        if dec_marker:
-            self._decrypt = True
-        else:
-            self.key_error = True
 
     def _demux(self):
         """PS dan video PES (0xE0-EF) payload'larini ajratib _es ga qo'shadi."""
