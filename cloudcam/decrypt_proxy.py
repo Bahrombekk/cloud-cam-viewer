@@ -453,7 +453,7 @@ def list_cameras(client=None):
         chname = (r.get("resourceName") or "").strip()
         devname = dev_names.get(serial, "")
         if devname and chname and devname.lower() not in chname.lower():
-            label = f"{devname} — {chname}"
+            label = f"{devname} - {chname}"   # ASCII '-' (cv2 oynada '—' ko'rinmaydi)
         else:
             label = chname or devname or f"{serial} CH{ch}"
         cams.append((serial, ch, label))
