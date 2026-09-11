@@ -28,15 +28,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from Crypto.Cipher import AES
 
-import config
 import requests as _rq
 import pyezvizapi.cloud_stream as _cs
 from pyezvizapi.client import EzvizClient
 from pyezvizapi.cloud_stream import open_cloud_stream
 from pyezvizapi.stream import rtp_payload
 
+from .settings import get_active
+
 # Platformaga qarab klient turi (pagelist to'liq natija qaytarishi uchun muhim)
-_CLIENT_TYPE = "55" if getattr(config, "PLATFORM", "hikconnect") == "hikconnect" else "1"
+_CLIENT_TYPE = "55" if get_active().platform == "hikconnect" else "1"
 
 
 def _paged_vtm_page_list(client):
@@ -475,7 +476,7 @@ class PsStreamDecryptor(_NalDecryptBase):
 
 def _make_client():
     import re
-    with open(config.TOKEN_FILE, encoding="utf-8") as f:
+    with open(get_active().token_file, encoding="utf-8") as f:
         token = json.load(f)
     client = EzvizClient(token.get("username"), None, token.get("api_url"), token=token)
     # Klient turi — busiz pagelist hamma resurslarni qaytarmaydi (platformaga qarab)

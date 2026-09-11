@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cloudcam"
+version = "0.2.0"
+description = "EZVIZ / Hik-Connect bulut kameralariga kirish va shifrlangan oqimlarni deshifrlash (H.264/H.265, RTP + MPEG-PS)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = ["ezviz", "hik-connect", "hikvision", "cctv", "rtsp", "camera", "hevc", "decrypt"]
+authors = [{ name = "Bahrombek" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Video",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pyezvizapi",
+    "numpy",
+    "requests",
+    "pycryptodome",
+]
+
+[project.optional-dependencies]
+# Ko'rish (OpenCV) ixtiyoriy — yadro headless ishlaydi.
+viewer = ["opencv-python"]
+dev = ["pytest", "ruff"]
+
+[project.urls]
+Homepage = "https://github.com/Bahrombekk/cloud-cam-viewer"
+Source = "https://github.com/Bahrombekk/cloud-cam-viewer"
+
+[project.scripts]
+# `pip install` dan keyin buyruq sifatida ishlatiladi.
+cloudcam = "cloudcam.cli:main"
+
+[tool.setuptools]
+packages = ["cloudcam"]
+
+[tool.ruff]
+line-length = 100

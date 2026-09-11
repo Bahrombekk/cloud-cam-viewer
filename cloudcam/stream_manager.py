@@ -20,14 +20,15 @@ import tempfile
 
 import numpy as np
 
-import config
+from .settings import get_active
 
 
-def load_cam_keys():
+def load_cam_keys(path=None):
     """Saqlangan cam_key larni yuklash."""
-    if os.path.exists(config.CAMKEY_FILE):
+    path = path or get_active().camkey_file
+    if os.path.exists(path):
         try:
-            with open(config.CAMKEY_FILE) as f:
+            with open(path) as f:
                 return json.load(f)
         except Exception:
             pass
@@ -35,6 +36,13 @@ def load_cam_keys():
 
 
 class CameraStream:
+    # Qotgan oqim watchdog: ffmpeg ishlab turibdi-yu, shuncha soniya kadr
+    # kelmasa — oqim qotgan (bulut relay ulanishni yopmasdan to'xtagan) yoki
+    # birinchi kadr umuman kelmagan. ffmpeg o'ldiriladi -> reader qayta
+    # ulanadi. FREEZE_TIMEOUT birinchi kadr kechikishidan (~7-10 s) katta.
+    FREEZE_TIMEOUT = 20.0
+    FREEZE_CHECK = 5.0
+
     def __init__(self, serial, channel, port, decrypt=False,
                  width=None, height=None, key=None):
         self.serial = serial
@@ -42,8 +50,9 @@ class CameraStream:
         self.port = port
         self.decrypt = decrypt
         self.key = key  # shifrlangan kamera "Tasdiqlash Kodu" (verification code)
-        self.width = width or config.DISPLAY_WIDTH
-        self.height = height or config.DISPLAY_HEIGHT
+        _s = get_active()
+        self.width = width or _s.display_width
+        self.height = height or _s.display_height
 
         self.proxy_proc = None
         self.ffmpeg_proc = None
@@ -58,10 +67,12 @@ class CameraStream:
 
         self._lock = threading.Lock()
         self._thread = None
+        self._watch_thread = None
+        self._ffmpeg_started = 0.0    # joriy ffmpeg urinishi boshlangan vaqt
         self._frame_counter = 0
         self._fps_time = time.time()
-        # GPU (NVDEC) dekod — config.USE_GPU bilan; ishlamasa avtomatik dasturiyga o'tadi
-        self._use_gpu = getattr(config, "USE_GPU", False)
+        # GPU (NVDEC) dekod — sozlamadan; ishlamasa avtomatik dasturiyga o'tadi
+        self._use_gpu = get_active().use_gpu
 
     def _wait_port(self, timeout=20):
         start = time.time()
@@ -100,6 +111,10 @@ class CameraStream:
             except OSError:
                 pass
         python = self._python_exe()
+        token_file = get_active().token_file
+        # Subprocess sozlamani muhit o'zgaruvchilari orqali oladi (config.py
+        # ga bog'liq emas — kutubxona rejimida ham ishlaydi).
+        env = dict(os.environ, CLOUDCAM_TOKEN_FILE=token_file)
         if self.decrypt and self.key:
             # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan)
             cmd = [
@@ -109,7 +124,7 @@ class CameraStream:
         else:
             # Shifrlanmagan kamera — standart pyezvizapi proxy (modul sifatida)
             cmd = [
-                python, "-m", "pyezvizapi", "--token-file", config.TOKEN_FILE,
+                python, "-m", "pyezvizapi", "--token-file", token_file,
                 "stream", "proxy",
                 "--serial", self.serial,
                 "--channel", str(self.channel),
@@ -117,7 +132,7 @@ class CameraStream:
                 "--allow-encrypted",
             ]
         self.proxy_proc = subprocess.Popen(
-            cmd, cwd=self._project_root(),
+            cmd, cwd=self._project_root(), env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _ffmpeg_cmd(self):
@@ -172,6 +187,7 @@ class CameraStream:
                     stderr=subprocess.DEVNULL,
                     bufsize=frame_size * 4,
                 )
+                self._ffmpeg_started = time.time()  # watchdog shu vaqtdan sanaydi
 
                 backoff = 1  # muvaffaqiyatli ulandi, backoff ni tiklash
                 frames_this_attempt = 0
@@ -220,7 +236,8 @@ class CameraStream:
                 # Bo'sh kanal (kamera ulanmagan) ni aniqlash: ketma-ket kadrsiz urinishlar
                 if frames_this_attempt > 0:
                     self._consec_empty = 0
-                    if self.error and ("Signal" in self.error or "OFFLINE" in self.error):
+                    if self.error and any(w in self.error for w in
+                                          ("Signal", "OFFLINE", "qotdi")):
                         self.error = None  # kamera qaytib keldi
                 else:
                     self._consec_empty += 1
@@ -241,10 +258,32 @@ class CameraStream:
                 time.sleep(min(backoff, 10))
                 backoff = min(backoff * 2, 10)
 
+    def _watchdog_loop(self):
+        """Qotgan oqimni aniqlaydi: ffmpeg ishlayapti-yu, FREEZE_TIMEOUT dan
+        beri kadr yo'q -> ffmpeg'ni o'ldiradi. Shunda reader'ning bloklangan
+        read() i uziladi va qayta ulanish boshlanadi. Bloklangan read busiz
+        abadiy kutardi (bulut ba'zan ulanishni yopmasdan kadrni to'xtatadi)."""
+        while self.running:
+            time.sleep(self.FREEZE_CHECK)
+            if not self.running or not self.ffmpeg_proc:
+                continue
+            # Sanoq nuqtasi: oxirgi kadr yoki (kadr yo'q bo'lsa) ffmpeg boshi.
+            ref = max(self.last_frame_time, self._ffmpeg_started)
+            if ref and time.time() - ref > self.FREEZE_TIMEOUT:
+                self.connected = False
+                if self.error is None:
+                    self.error = "Oqim qotdi (kadr yo'q) — qayta ulanmoqda"
+                try:
+                    self.ffmpeg_proc.kill()   # read() uziladi -> reader qayta ulanadi
+                except Exception:
+                    pass
+
     def start(self):
         self.running = True
         self._thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread.start()
+        self._watch_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._watch_thread.start()
 
     def get_frame(self):
         with self._lock:
@@ -271,10 +310,13 @@ class CameraStream:
 
 
 class StreamManager:
-    def __init__(self, client=None):
+    def __init__(self, client=None, settings=None):
         self.streams = {}
         self.client = client  # token refresh uchun
-        self._next_port = config.PROXY_START_PORT
+        if settings is not None:
+            from .settings import set_active
+            set_active(settings)
+        self._next_port = get_active().proxy_start_port
         self._token_thread = None
         self._running = False
 
@@ -311,7 +353,7 @@ class StreamManager:
                     break
                 try:
                     self.client.refresh_session()
-                    self.client.save_token(config.TOKEN_FILE)
+                    self.client.save_token(get_active().token_file)
                     print(f"[{time.strftime('%H:%M:%S')}] 🔄 Token yangilandi")
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] ⚠️  Token yangilash xatosi: {e}")
