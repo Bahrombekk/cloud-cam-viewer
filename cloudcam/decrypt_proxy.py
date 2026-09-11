@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 from itertools import chain
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,7 @@ from pyezvizapi.client import EzvizClient
 from pyezvizapi.cloud_stream import open_cloud_stream
 from pyezvizapi.stream import rtp_payload
 
+from . import vtm_cache
 from .settings import get_active
 
 # Platformaga qarab klient turi (pagelist to'liq natija qaytarishi uchun muhim)
@@ -79,10 +81,33 @@ def _paged_vtm_page_list(client):
 
 # kutubxonaning bir-sahifali funksiyasini to'liq sahifalovchi bilan almashtiramiz
 _cs.get_vtm_page_list = _paged_vtm_page_list
+# ...va uning USTIGA hisob bo'yicha fayl keshini qo'yamiz ([[vtm_cache]]):
+# pagelist + VTDU token har ochilishda ~6s bulutda ketardi, kesh bilan ~0.2s.
+_CACHE_KEY = vtm_cache.install()
 
 HEVC_VIDEO_PT = 96                  # RTP payload type — video
 NAL_ENCRYPTED_PREFIX = 4096         # har NAL ning birinchi shu qadar bayti shifrlangan
 START = b"\x00\x00\x00\x01"
+
+# --- Inter (P/B) slice shifrini AVTO-ANIQLASH ---
+# "Selektiv shifr" (faqat IRAP + param-set shifrlanadi, P/B toza) — bu BA'ZI
+# kameralarda to'g'ri, ba'zilarida NOTO'G'RI. Xato taxmin qilinsa HAR P-freym
+# buziladi: tasvir I-freymda tiklanib, orasida to'kiladi — aynan "telefonda
+# silliq, bu yerda buziladi" shikoyati. O'lchov (40s oqim, bitta kamera):
+# taxmin bilan 246 ta HEVC dekoder xatosi, hammasi deshifrlanganda 5 ta.
+_INTER_SAMPLES = 8              # qaror uchun shuncha inter NAL namunasi
+_INTER_MARGIN = 0.25            # "deshifr" shuncha tuzilishliroq bo'lsagina tanlanadi
+_INTER_MAX_PENDING = 4 << 20    # inter NAL kelmasa shuncha baytdan keyin taslim
+
+
+def _is_missing_resource(exc) -> bool:
+    """Qurilma bulut ro'yxatida YO'Q (oflayn kamera ro'yxatdan tushadi).
+
+    Bu ESKIRGAN metama'lumot EMAS — pagelist muvaffaqiyatli olingan, qurilmaning
+    o'zi yo'q. Shuning uchun bu holatda VTM keshini bekor qilish zarar: kesh
+    hisob bo'yicha, ya'ni bitta oflayn kamera butun hisobning keshini o'chirardi
+    (bizda 151 kameradan 31 tasi oflayn edi — bu doim ishlab turardi)."""
+    return "could not find vtm resource" in str(exc or "").lower()
 
 
 def keyerror_flag_path(serial: str, channel: int = 1) -> str:
@@ -117,6 +142,15 @@ class _NalDecryptBase:
         self.codec = None      # 'h264' | 'hevc' | None
         self._clear = 0        # boshidagi toza (dekodlanmaydigan) baytlar
         self._drop = 0         # boshidan tashlanadigan (toza tur-ko'rsatkich) baytlar
+        # Inter (P/B) slice ham shifrlanganmi: None=noma'lum, True/False=qaror.
+        # Qaror chiqquncha chiqish NAVBATDA ushlanadi — aks holda birinchi
+        # kadrlar noto'g'ri o'qilib ketadi va dekoder xato toshqini beradi.
+        self._inter_enc = None
+        self._inter_clear = []   # namuna: toza body'ning 1-bayti
+        self._inter_dec = []     # namuna: AES-deshifrlangan body'ning 1-bayti
+        self._pending = []       # None = qaror qabul qilingan (buferlash yo'q)
+        self._pending_bytes = 0
+        self.inter_note = None   # diagnostika uchun qisqa izoh
 
     def _aes16(self, data) -> bytes:
         return AES.new(self.key, AES.MODE_ECB).decrypt(bytes(data[:16]))
@@ -161,11 +195,80 @@ class _NalDecryptBase:
         if ps and len(nal) >= hdr + 16:
             self.key_error = True
 
+    # ---- chiqish: inter-qaror chiqquncha TARTIB bilan buferlanadi ----
+
+    def _put(self, out, data: bytes) -> None:
+        """Tayyor baytlarni chiqaradi (yoki qaror chiqmaguncha navbatga qo'yadi)."""
+        if self._pending is None:
+            out += data
+            return
+        self._pending.append((b"", data, 0))
+        self._pending_bytes += len(data)
+        self._guard_pending(out)
+
+    def _inter_bytes(self, nal, hdr: int) -> bytes:
+        """Inter slice — qarorga qarab deshifrlanadi yoki toza qoldiriladi."""
+        if self._inter_enc:
+            return START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
+        return START + bytes(nal)
+
+    def _put_inter(self, out, nal, hdr: int) -> None:
+        if self._pending is None:
+            out += self._inter_bytes(nal, hdr)
+            return
+        self._pending.append((b"i", bytes(nal), hdr))
+        self._pending_bytes += len(nal)
+        self._sample_inter(nal, hdr)
+        if self._inter_enc is not None:
+            self._flush(out)        # qaror chiqdi — navbat TARTIB bilan chiqadi
+        else:
+            self._guard_pending(out)
+
+    def _guard_pending(self, out) -> None:
+        """Inter NAL umuman kelmasa (faqat I-freym) — kutib qotib qolmaymiz."""
+        if self._pending is not None and self._pending_bytes > _INTER_MAX_PENDING:
+            self._inter_enc = False
+            self.inter_note = "namuna yetmadi -> TOZA deb qabul qilindi"
+            self._flush(out)
+
+    def _flush(self, out) -> None:
+        pend, self._pending = self._pending, None
+        self._pending_bytes = 0
+        for kind, data, hdr in pend or ():
+            out += data if kind == b"" else self._inter_bytes(data, hdr)
+
+    def _sample_inter(self, nal, hdr: int) -> None:
+        """TUZILISH testi: slice header baytlari TAKRORLANADI (bir xil PPS, bir xil
+        tuzilish), shifrlangan baytlar esa TASODIFIY. Shuning uchun N namunadagi
+        FARQLI qiymatlar sonini solishtiramiz — kichigi to'g'ri o'qish.
+        Bitta bayt bo'yicha "yaroqlilik" testi ishlamaydi: tasodifiy bayt ham ~87%
+        holatda yaroqli ue(v) beradi; farqli-qiymat nisbati esa keskin ajratadi
+        (o'lchov: toza=1.00 vs deshifr=0.06)."""
+        body = nal[hdr:]
+        if len(body) < 16:
+            return
+        self._inter_clear.append(body[0])
+        self._inter_dec.append(self._aes16(body)[0])
+        if len(self._inter_clear) >= _INTER_SAMPLES:
+            n = len(self._inter_clear)
+            d_clear = len(set(self._inter_clear)) / n
+            d_dec = len(set(self._inter_dec)) / n
+            # Teng bo'lsa TOZA qoldiramiz (xavfsizroq: toza P-freymni deshifrlash
+            # uni buzadi), faqat aniq farq bo'lsa deshifrga o'tamiz.
+            self._inter_enc = d_dec + _INTER_MARGIN < d_clear
+            self.inter_note = (f"inter={'SHIFRLI' if self._inter_enc else 'TOZA'} "
+                               f"(toza={d_clear:.2f} deshifr={d_dec:.2f}, {n} namuna)")
+
     def _emit_nal(self, out, nal) -> None:
         if self._decrypt is None:
             return  # shifr aniqlanmaguncha chiqarmaymiz
+        # Inter savoli FAQAT "A-body" variantida bor (header toza, body shifrli).
+        # Toza oqim / B-hint / B-whole da savol yo'q -> buferlashni o'chiramiz.
+        # Bu yerda navbat hali bo'sh (chiqish `_decrypt` aniqlangunga qadar yo'q).
+        if self._pending is not None and not (self._decrypt and self._clear and not self._drop):
+            self._pending = None
         if not self._decrypt:                       # toza oqim
-            out += START + bytes(nal)
+            self._put(out, START + bytes(nal))
             return
         if self._drop:
             # B-hint + SELEKTIV shifr (har NAL alohida). I-freym/param-set NAL larida
@@ -173,27 +276,29 @@ class _NalDecryptBase:
             # mos keladi; juda qisqa (PPS) bo'lsa AESsiz dublikat header. P-freym ko'rsatkichsiz.
             hdr = self._drop
             if len(nal) >= hdr + 16 and self._aes16(nal[hdr:hdr + 16])[:hdr] == bytes(nal[:hdr]):
-                out += START + self._decrypt_body(nal[hdr:])   # shifrli -> deshifr = to'liq NAL
+                self._put(out, START + self._decrypt_body(nal[hdr:]))  # shifrli -> to'liq NAL
             elif len(nal) >= 2 * hdr and bytes(nal[hdr:2 * hdr]) == bytes(nal[:hdr]):
-                out += START + bytes(nal[hdr:])                 # toza, dublikat ko'rsatkich -> tashlash
+                self._put(out, START + bytes(nal[hdr:]))        # toza, dublikat ko'rsatkich
             else:
-                out += START + bytes(nal)                       # oddiy toza NAL (P-freym)
+                self._put(out, START + bytes(nal))              # oddiy toza NAL (P-freym)
             return
         # A (header toza, body shifrli) yoki B-whole (butun NAL shifrli)
         hdr = self._clear
         if hdr == 0:                                    # B-whole: butun NAL deshifr
-            out += START + self._decrypt_body(nal)
+            self._put(out, START + self._decrypt_body(nal))
             return
         if len(nal) <= hdr:
-            out += START + bytes(nal)
+            self._put(out, START + bytes(nal))
             return
-        # variant A + SELEKTIV: faqat kalit NAL turini deshifrlaymiz, inter slice toza
+        # Variant A: IRAP + param-set HAR DOIM shifrli. Inter (P/B) slice esa
+        # kameraga QARAB — shuning uchun taxmin qilmaymiz, oqimdan aniqlaymiz
+        # ([[_sample_inter]]). Qaror chiqquncha chiqish navbatda ushlanadi.
         ntype = (nal[0] & 0x1F) if hdr == 1 else ((nal[0] >> 1) & 0x3F)
         enc = self._H264_ENC_TYPES if hdr == 1 else self._HEVC_ENC_TYPES
         if ntype in enc:
-            out += START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:])
+            self._put(out, START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:]))
         else:
-            out += START + bytes(nal)                   # inter (P/B) slice — toza
+            self._put_inter(out, nal, hdr)              # inter (P/B) slice
 
     def _emit(self, out: bytearray, nal) -> None:  # HEVC RTP (2 baytli NAL header, VPS=tur 32)
         if len(nal) < 2:
@@ -474,6 +579,206 @@ class PsStreamDecryptor(_NalDecryptBase):
         return self._process_es()
 
 
+class PacedWriter:
+    """Bulut burstini TEKISLAB yozadi (jitter bufer) + bulut soketini bloklamaydi.
+
+    IKKI muammoni hal qiladi.
+
+    1) QOTISH. Bulut kadrlarni tekis emas, GOP'ma-GOP yuboradi. O'lchandi (bitta
+       kamera, 500 kadr): **491 kadr <10 ms oralig'ida keldi, qolgan 9 oraliq
+       ~2000 ms** — ya'ni butun GOP bir zumda, keyin 2s jimlik. Kadrni kelishi
+       bilan uzatsak, ko'ruvchi 2s qotgan tasvirni ko'radi, keyin 50 kadr bir
+       zumda "tez surat" bo'lib o'tadi. Telefondagi ilova silliq ko'rinadi,
+       chunki u buferlaydi. Shu sababli kadrlar SHU YERDA — hali SIQILGAN
+       holatda (GOP ~0.2 MB, xom kadrlarda esa 50 x 2.7 MB bo'lardi) —
+       buferlanadi va o'lchangan tezlikda chiqariladi.
+
+    2) BACKPRESSURE. Avval chiqish soketiga bulut o'quvchi THREAD'ning O'ZI
+       yozardi: ffmpeg/ko'ruvchi sekinlashsa `write()` bloklanadi, bulut soketi
+       o'qilmay qoladi va bulut paket tashlaydi -> tasvir buziladi. Endi yozuv
+       alohida thread'da; navbat to'lsa KALIT KADR chegarasida tashlanadi
+       (o'rtadan kesilmaydi), bulut o'quvchisi esa hech qachon kutmaydi.
+    """
+
+    MAX_BYTES = 8 << 20        # navbat cheki (siqilgan bayt)
+    TARGET_S = 1.0             # maqsad bufer chuqurligi
+    RATE_WINDOW_S = 4.0        # kelish tezligi shu oynada o'lchanadi
+    MIN_STEP, MAX_STEP = 1 / 60.0, 1 / 4.0
+
+    def __init__(self, wfile, codec: str | None, paced: bool = True):
+        self._w = wfile
+        self._paced = paced
+        self._hevc = codec != "h264"
+        self._q = []               # [(bytes, kadrmi, kalitmi)]
+        self._bytes = 0
+        self._rx = []              # kadr kelish vaqtlari
+        self._cur = bytearray()    # yig'ilayotgan kadr
+        self._cur_key = False
+        self._cur_has_vcl = False
+        self._lock = threading.Lock()
+        self._ev = threading.Event()
+        self.failed = False
+        self.dropped = 0
+        self._stop = False
+        self._th = threading.Thread(target=self._run, daemon=True)
+
+    # ---- Annex-B bo'lish: NAL'lardan KADR chegarasini topamiz ----
+    def _nal_kind(self, b0: int, b1: int) -> tuple[bool, bool]:
+        """(vcl_mi, kalitmi) — NAL turiga qarab."""
+        if self._hevc:
+            t = (b0 >> 1) & 0x3F
+            return t <= 31, 16 <= t <= 21
+        t = b0 & 0x1F
+        return 1 <= t <= 5, t == 5
+
+    def start(self):
+        self._th.start()
+        return self
+
+    def feed(self, data: bytes) -> None:
+        """Deshifrlangan baytlar — kadrlarga bo'lib navbatga qo'yamiz."""
+        if not self._paced:
+            self._push(data, frame=True, key=False)
+            return
+        pos = 0
+        while True:
+            i = data.find(b"\x00\x00\x01", pos)
+            if i < 0:
+                self._cur += data[pos:]
+                break
+            hdr = i + 3
+            if hdr < len(data):
+                vcl, key = self._nal_kind(data[hdr], data[hdr + 1] if hdr + 1 < len(data) else 0)
+                # Yangi VCL NAL — oldingi kadr tugadi (bir kadr = bir slice deb
+                # hisoblaymiz; ko'p slice bo'lsa chuqurlik qaytarmasi tuzatadi).
+                if vcl and self._cur_has_vcl:
+                    start = i - 1 if i > 0 and data[i - 1] == 0 else i
+                    self._cur += data[pos:start]
+                    self._flush_frame()
+                    pos = start
+                    continue
+                if key:
+                    self._cur_key = True
+                if vcl:
+                    self._cur_has_vcl = True
+            self._cur += data[pos:hdr]
+            pos = hdr
+        if len(self._cur) > (2 << 20):     # himoya: chegara topilmadi
+            self._flush_frame()
+
+    def _flush_frame(self) -> None:
+        if not self._cur:
+            return
+        self._push(bytes(self._cur), frame=True, key=self._cur_key)
+        self._cur = bytearray()
+        self._cur_key = False
+        self._cur_has_vcl = False
+
+    def _push(self, data: bytes, *, frame: bool, key: bool) -> None:
+        with self._lock:
+            self._q.append((data, frame, key))
+            self._bytes += len(data)
+            if frame:
+                self._rx.append(time.monotonic())
+            # To'lib ketdi — KEYINGI KALIT KADRGACHA butun kadrlarni tashlaymiz
+            # (o'rtadan kesish dekoderga buzuq GOP beradi; bu esa toza sakrash).
+            if self._bytes > self.MAX_BYTES:
+                while len(self._q) > 1:
+                    d, _f, _k = self._q.pop(0)
+                    self._bytes -= len(d)
+                    self.dropped += 1
+                    if self._q[0][2]:          # oldinda kalit kadr — to'xtaymiz
+                        break
+        self._ev.set()
+
+    def _step(self) -> float:
+        now = time.monotonic()
+        while self._rx and now - self._rx[0] > self.RATE_WINDOW_S:
+            self._rx.pop(0)
+        # DIQQAT: kelish tezligini burst ichida o'lchab bo'lmaydi (50 kadr bir
+        # zumda keladi). Shuning uchun o'lchov kamida bir necha GOP'ni qamragan
+        # bo'lsagina ishlatiladi; undan oldin 25 fps deb boshlaymiz va farqni
+        # bufer chuqurligi qaytarmasi tuzatadi.
+        span = now - self._rx[0] if self._rx else 0.0
+        if len(self._rx) > 20 and span > 2.0:
+            nominal = span / len(self._rx)
+        else:
+            nominal = 0.04
+        nominal = max(self.MIN_STEP, min(self.MAX_STEP, nominal))
+        depth = len(self._q) * nominal
+        if depth > self.TARGET_S * 2:
+            return nominal * 0.85          # orqada qoldik — biroz tezroq
+        if depth < self.TARGET_S * 0.5:
+            return nominal * 1.15          # bufer sayoz — biroz sekinroq
+        return nominal
+
+    def _run(self) -> None:
+        due = time.monotonic()
+        while True:
+            with self._lock:
+                item = self._q.pop(0) if self._q else None
+                if item:
+                    self._bytes -= len(item[0])
+            if item is None:
+                if self._stop:
+                    return                 # navbat BO'SHAGANDAN keyin chiqamiz
+                self._ev.wait(0.05)
+                self._ev.clear()
+                due = time.monotonic()
+                continue
+            try:
+                self._w.write(item[0])
+            except Exception:
+                self.failed = True
+                return
+            if self._paced and item[1]:
+                due += self._step()
+                delay = due - time.monotonic()
+                if delay > 0:
+                    time.sleep(min(delay, 1.0))
+                elif delay < -1.0:
+                    due = time.monotonic()   # juda orqada — soatni tiklaymiz
+
+    def close(self, drain: float = 3.0) -> None:
+        """Navbatni chiqarib bo'lgach to'xtaydi (yopilishda oxirgi kadrlar
+        yo'qolmasin), lekin `drain` soniyadan ko'p kutmaydi."""
+        self._flush_frame()
+        self._stop = True
+        self._ev.set()
+        if self._th.is_alive():
+            self._th.join(timeout=drain)
+
+
+_orig_build_vtm_url = None
+
+
+def set_substream(enable: bool) -> None:
+    """Bulutdan KICHIK (substream) oqimni so'raydi — VTM URL'idagi `stream=1`
+    o'rniga `stream=2`.
+
+    Nega kerak: grid'da har plitka ekranda ~250-500 px, kamera esa 2560x1440
+    yuboradi — bu ekran ko'rsatolmaydigan ~30 barobar ortiqcha piksel. O'lchov
+    (bir xil devor, 23 plitka): asosiy oqimda tasvir to'kilib qotgan, substream
+    bilan har plitka **640x360, ~0.11 Mbit/s** (asosiysi ~4 Mbit/s — 36 barobar
+    kam) va hammasi toza dekodlangan. Zaif uplink'da paket yo'qolishi ham
+    kamayadi (yashil chiziqlar/buzilish).
+
+    Hamma kamerada substream bo'lavermaydi (masalan batareyali modellar) —
+    bunday holda bulut asosiy oqimni beradi, ya'ni zarari yo'q.
+    """
+    global _orig_build_vtm_url
+    import re as _re
+    if _orig_build_vtm_url is None:
+        _orig_build_vtm_url = _cs.build_vtm_url          # ASL nusxa (bir marta)
+    if enable:
+        def _sub(*a, **kw):
+            return _re.sub(r"(?<=[?&])stream=1(?=&|$)", "stream=2",
+                           _orig_build_vtm_url(*a, **kw))
+        _cs.build_vtm_url = _sub
+    else:
+        _cs.build_vtm_url = _orig_build_vtm_url
+
+
 def _make_client():
     import re
     with open(get_active().token_file, encoding="utf-8") as f:
@@ -525,8 +830,14 @@ def _device_names(client):
 def list_cameras(client=None):
     """Haqiqiy kameralar ro'yxati: [(serial, channel, name)].
     Nom = "Qurilma nomi — Kanal nomi" (ilovadagi nom bilan moslash uchun).
-    VTM resurslaridan olinadi — bo'sh NVR kanallari (kamera ulanmagan) ko'rsatilmaydi."""
-    client = client or _make_client()
+    VTM resurslaridan olinadi — bo'sh NVR kanallari (kamera ulanmagan) ko'rsatilmaydi.
+
+    `client` — pyezvizapi `EzvizClient` (token bilan). Yuqori darajali API o'zining
+    `CloudClient` obyektini uzatardi, unda esa `_token` yo'q: natijada so'rov
+    `https://none/...` ga ketib `NameResolutionError` berardi. Shuning uchun mos
+    kelmaydigan obyekt uzatilsa token fayldan o'zimiz quramiz."""
+    if client is None or not getattr(client, "_token", None):
+        client = _make_client()
     dev_names = _device_names(client)
     res = _cs.get_vtm_page_list(client).get("resourceInfos", []) or []
     cams = []
@@ -549,8 +860,9 @@ def list_cameras(client=None):
     return cams
 
 
-def serve(serial: str, port: int, key: str, channel: int = 1):
+def serve(serial: str, port: int, key: str, channel: int = 1, substream: bool = False):
     client = _make_client()
+    set_substream(substream)
 
     def _flag_keyerror():
         try:
@@ -574,12 +886,28 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
             # Xom oqimni dekodlab to'g'ridan-to'g'ri uzatamiz (ichki ffmpeg yo'q):
             #   RTP/PS -> Annex-B (H.264/HEVC), MPEG-TS -> o'zicha.
             # Tashqi ffmpeg (stream_manager) codec'ni auto-detect qilib, bardoshli dekodlaydi.
+            # Bulut resurslarida shu KANAL bormi? NVR online bo'lsa ham, unda
+            # yo'q kanal hech qachon oqim bermaydi — bunda 20s kutib o'tirmaymiz
+            # va "offline" emas, ANIQ sabab qaytaramiz ([[vtm_cache.channel_missing]]).
+            if vtm_cache.channel_missing(_CACHE_KEY, serial, channel):
+                _flag_offline()
+                self.send_error(404, "channel not in cloud device list")
+                return
+            got_packets = False          # kesh FAQAT paket kelmasa bekor qilinadi
             try:
                 stream_cm = open_cloud_stream(client, serial, channel=channel,
                                               client_type=9, refresh_vtm=False, timeout=20.0)
             except Exception as e:
                 if "offline" in str(e).lower() or "unreachable" in str(e).lower():
                     _flag_offline()
+                elif _is_missing_resource(e):
+                    # Qurilma bulut ro'yxatidan tushgan (oflayn) — bu ESKIRGAN
+                    # kesh EMAS, shuning uchun keshni o'chirmaymiz: kesh HISOB
+                    # bo'yicha, ya'ni bitta oflayn kamera tufayli o'sha hisobdagi
+                    # hamma kamera qayta metama'lumot yuklardi.
+                    _flag_offline()
+                else:
+                    vtm_cache.invalidate(_CACHE_KEY)   # metama'lumot eskirgan bo'lishi mumkin
                 self.send_error(502)
                 return
             try:
@@ -611,9 +939,11 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                         self.send_error(502)
                         return
 
+                    annexb = True                            # Annex-B chiqadimi (pacing uchun)
                     if not is_rtp and buffered[0][:1] == b"\x47":
                         transform = lambda b: b              # MPEG-TS (shifrsiz)
                         keyerr = lambda: False
+                        annexb = False
                     elif not is_rtp:
                         dec = PsStreamDecryptor(key)          # MPEG-PS (H.264/HEVC avto)
                         transform = dec.feed; keyerr = lambda: dec.key_error
@@ -629,18 +959,33 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
 
-                    for body in chain(buffered, (bytes(p.body) for p in pkts)):
-                        data = transform(body)
-                        if keyerr():
-                            _flag_keyerror()
-                            break
-                        if data:
-                            self.wfile.write(data)
+                    # Yozuv ALOHIDA thread'da va O'LCHOVLI ([[PacedWriter]]) —
+                    # bulut o'quvchisi hech qachon bloklanmaydi va 2 soniyalik
+                    # burstlar tekis oqimga yoyiladi.
+                    writer = PacedWriter(self.wfile, codec, paced=annexb).start()
+                    try:
+                        for body in chain(buffered, (bytes(p.body) for p in pkts)):
+                            data = transform(body)
+                            if keyerr():
+                                _flag_keyerror()
+                                break
+                            if data:
+                                got_packets = True
+                                writer.feed(data)
+                            if writer.failed:
+                                break          # mijoz uzildi
+                    finally:
+                        writer.close()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             except Exception as e:
                 if "offline" in str(e).lower() or "unreachable" in str(e).lower():
                     _flag_offline()
+                elif not got_packets and not _is_missing_resource(e):
+                    # Bitta ham paket kelmadi -> keshdagi metama'lumot (VTDU
+                    # tokeni) eskirgan bo'lishi mumkin. Paket kelgan bo'lsa
+                    # kesh TO'G'RI edi — uzilish boshqa sababdan, tegmaymiz.
+                    vtm_cache.invalidate(_CACHE_KEY)
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
@@ -652,7 +997,10 @@ def serve(serial: str, port: int, key: str, channel: int = 1):
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Foydalanish: python decrypt_proxy.py <SERIAL> <PORT> <CODE> [CHANNEL]")
+        print("Foydalanish: python -m cloudcam.decrypt_proxy "
+              "<SERIAL> <PORT> <CODE> [CHANNEL] [--substream]")
         sys.exit(1)
-    serve(sys.argv[1], int(sys.argv[2]), sys.argv[3],
-          int(sys.argv[4]) if len(sys.argv) > 4 else 1)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    serve(args[0], int(args[1]), args[2],
+          int(args[3]) if len(args) > 3 else 1,
+          substream="--substream" in sys.argv)

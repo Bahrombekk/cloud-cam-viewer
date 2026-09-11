@@ -28,6 +28,10 @@ class Settings:
     display_width: int = 1280
     display_height: int = 720
     use_gpu: bool = True                  # NVDEC; ishlamasa dasturiyga o'tadi
+    # Bulutdan KICHIK oqim (substream) so'raladimi. Grid uchun juda foydali:
+    # o'lchov — plitka 640x360 / ~0.11 Mbit/s, asosiy oqim esa ~4 Mbit/s
+    # (36 barobar kam trafik va CPU). To'liq ekran uchun False qoldiring.
+    substream: bool = False
     token_file: str = "token.json"
     camkey_file: str = "cam_keys.json"
 

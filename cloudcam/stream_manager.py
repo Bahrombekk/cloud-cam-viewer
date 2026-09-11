@@ -42,6 +42,7 @@ class CameraStream:
     # ulanadi. FREEZE_TIMEOUT birinchi kadr kechikishidan (~7-10 s) katta.
     FREEZE_TIMEOUT = 20.0
     FREEZE_CHECK = 5.0
+    OFFLINE_BACKOFF_MAX = 60.0   # oflayn kamerani qayta sinash oralig'i (maks)
 
     def __init__(self, serial, channel, port, decrypt=False,
                  width=None, height=None, key=None):
@@ -64,6 +65,7 @@ class CameraStream:
         self.fps = 0
         self.error = None  # masalan: shifr kodi xato yoki signal yo'q
         self._consec_empty = 0  # ketma-ket kadrsiz urinishlar (bo'sh kanalni aniqlash)
+        self._offline_tries = 0  # ketma-ket OFFLINE urinishlar (kutishni uzaytirish)
 
         self._lock = threading.Lock()
         self._thread = None
@@ -121,6 +123,10 @@ class CameraStream:
                 python, "-m", "cloudcam.decrypt_proxy",
                 self.serial, str(self.port), self.key, str(self.channel),
             ]
+            # Grid uchun bulutdan KICHIK oqim so'raymiz ([[set_substream]]):
+            # plitka baribir ~250-500 px, 1440p esa 36 barobar ortiqcha trafik.
+            if get_active().substream:
+                cmd.append("--substream")
         else:
             # Shifrlanmagan kamera — standart pyezvizapi proxy (modul sifatida)
             cmd = [
@@ -142,13 +148,24 @@ class CameraStream:
             # NVIDIA NVDEC — dekodni GPU ga o'tkazadi (ko'p kamera uchun CPU ni bo'shatadi)
             cmd += ["-hwaccel", "cuda"]
         cmd += [
-            # discardcorrupt olib tashlandi — kadr tashlanishini kamaytiradi (silliqroq)
-            "-fflags", "nobuffer+genpts",
+            # DIQQAT: `nobuffer` QO'YILMAYDI! U demuxer'ga probe paytida
+            # buferlamaslikni aytadi va o'sha paytda yutilgan paketlar —
+            # VPS/SPS/PPS va BIRINCHI IDR — shunchaki tashlanadi. Dekoder
+            # P-freymlardan boshlaydi va tomoshabin kameraning KEYINGI IDR'igacha
+            # kul rang/buzilgan tasvir ko'radi. Bir xil kirish faylida o'lchandi:
+            # `nobuffer` bilan birinchi kadr Y(low..high)=125..127 (tekis kul
+            # rang), busiz 54..190 (haqiqiy tasvir). Kechikish uchun u kerak emas
+            # — kichik probe ayni shu foydani beradi.
+            # discardcorrupt ham yo'q — kadr tashlanishini kamaytiradi (silliqroq)
+            "-fflags", "+genpts",
             "-flags", "low_delay",
             "-err_detect", "ignore_err",
-            # tezroq boshlash uchun kichraytirildi (HEVC tez aniqlanadi)
-            "-analyzeduration", "500000",
-            "-probesize", "500000",
+            # Kichik probe = tez boshlash. Kirish Annex-B (H.264/HEVC) bo'lsa
+            # SPS/PPS birinchi KB'larda; MPEG-TS bo'lsa PAT/PMT uchun bir oz
+            # ko'proq kerak — 200 KB ikkalasiga ham yetadi (avval 500 KB edi,
+            # ya'ni ochilishda ~0.5s bekorga ketardi).
+            "-analyzeduration", "200000",
+            "-probesize", "200000",
         ]
         # decrypt_proxy MPEG-TS chiqaradi (RTP/HEVC ham, MPEG-PS ham) -> avtomatik aniqlanadi
         cmd += [
@@ -221,13 +238,20 @@ class CameraStream:
                     self.connected = False
                     break  # qayta urinish foydasiz (kod baribir xato)
 
-                # Kamera OFFLINE (VTM ma'lumot bermadi) — proxy bayroq qo'ygan
+                # Kamera OFFLINE (VTM ma'lumot bermadi) — proxy bayroq qo'ygan.
+                # Oflayn kamera qaytib kelguncha har 15s da urinish bulutga
+                # bekorga yuk (200 kameralik hisobda bu doimiy toshqin) —
+                # shuning uchun ketma-ket urinishlarda kutish UZAYADI.
                 if os.path.exists(self._offline_path()):
-                    self.error = "OFFLINE (kamera o'chiq yoki signal yo'q)"
+                    self._offline_tries += 1
+                    wait = min(self.OFFLINE_BACKOFF_MAX,
+                               15 * min(self._offline_tries, 4))
+                    self.error = (f"OFFLINE (kamera o'chiq yoki signal yo'q) — "
+                                  f"{wait:.0f}s dan keyin qayta urinamiz")
                     self.connected = False
-                    time.sleep(min(backoff, 15))
-                    backoff = min(backoff * 2, 15)
+                    time.sleep(wait)
                     continue
+                self._offline_tries = 0
 
                 # GPU bilan 0 kadr olindi -> NVDEC ishlamayapti, dasturiyga o'tamiz
                 if frames_this_attempt == 0 and self._use_gpu:
