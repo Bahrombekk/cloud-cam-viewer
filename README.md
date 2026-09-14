@@ -78,36 +78,102 @@ Credentials can also come from `CLOUDCAM_EMAIL` / `CLOUDCAM_PASSWORD` (or
 
 ## Usage
 
-```bash
-python app.py                       # list cameras, pick, view (grid/fullscreen)
-python single.py <SERIAL>           # one camera, fullscreen
+**First run, in order** — skipping step 2 is what produces a grid of black
+tiles reading "Shifr kodi xato":
 
-cloudcam cameras                    # list cameras
+```bash
+cloudcam cameras                    # 1. what does the account have?
+cloudcam keys                       # 2. fetch the verification codes (see below)
+python app.py                       # 3. view
+```
+
+```
+$ cloudcam cameras
+BD7793665  ch1  Aloqa uyi - Ombor
+BD8712447  ch1  Aloqa uyi - Kirish
+BD8712447  ch2  Aloqa uyi - Hovli
+BF1916346  ch1  Omborxona
+```
+
+Everything else:
+
+```bash
+python single.py <SERIAL>           # one camera, fullscreen
 cloudcam snapshot <SERIAL>          # save one JPEG
 cloudcam view                       # grid viewer (needs the `viewer` extra)
 ```
 
-**Encrypted cameras — get the verification codes.** The cloud knows them, so
-ask it instead of reading codes off device labels:
+### Encrypted cameras — get the verification codes
 
-```bash
-cloudcam keys                       # all devices; prints what it saved
+Without a code an encrypted camera shows **"Shifr kodi xato! cam_keys.json ni
+tekshiring"** and a black tile: the stream is AES-encrypted and the verification
+code is the key. The cloud knows the codes, so ask it rather than reading them
+off device labels.
+
+**Worked example.** First run — the cloud wants the session elevated, so it
+emails a 2FA code and stops:
+
+```
+$ cloudcam keys
+2FA kod b***@gmail.com yuborildi. Qayta ishga tushiring:
+  cloudcam keys --code <KOD>
 ```
 
-The first run asks the cloud to elevate the session and emails you a 2FA code.
-Enter it once — every remaining camera is then fetched without another code:
+Enter that code once. It elevates the session, and every remaining camera is
+fetched without another code:
 
-```bash
-cloudcam keys --code 123456
+```
+$ cloudcam keys --code 123456
+BD7793665  KJWQTZ
+BD8712447  SCXYKW
+BF1916346  ABCDEF
 ```
 
-Codes land in `cam_keys.json`. Manual entry still works when you already know a
-code, or when the account cannot elevate:
+Re-running is cheap — codes already stored are not re-fetched:
+
+```
+$ cloudcam keys
+(3 ta kod allaqachon bor — qayta olish uchun --overwrite)
+```
+
+A camera that is offline fails on its own without stopping the rest:
+
+```
+$ cloudcam keys
+BD8712447  SCXYKW
+BF1916346  XATO: Qurilma ulanmagan (2009)
+```
+
+The result is `cam_keys.json` — a flat serial → code map (see
+[`cam_keys.example.json`](cam_keys.example.json)):
+
+```json
+{
+  "BD7793665": "KJWQTZ",
+  "BD8712447": "SCXYKW",
+  "BF1916346": "ABCDEF"
+}
+```
+
+For an NVR the code belongs to the **device**, so one entry covers all of its
+channels — you do not add `ch1`, `ch2`, … separately.
+
+Now `python app.py` decodes those cameras. Manual entry still works when you
+already know a code, or when the account cannot elevate to 2FA:
 
 ```bash
 python check_code.py <SERIAL> <CODE>        # verify a code (saves it if correct)
 python check_code.py <SERIAL> <CODE> all    # all 4 NVR channels
 python set_code.py   <SERIAL> <CODE>        # save a code directly
+```
+
+`check_code.py` tells you which case you are in:
+
+```
+$ python check_code.py BD8712447 SCXYKW
+🔎 Tekshirilmoqda: BD8712447 ch1 (kod: SCXYKW) ...
+✅ BD8712447 ch1: KOD TO'G'RI! Shifr ochildi.
+   💾 cam_keys.json ga saqlandi: BD8712447 -> SCXYKW
 ```
 
 **Controls (in the video window):** `q` quit · `g` grid · `1`–`9` fullscreen camera · `s` status
@@ -135,6 +201,7 @@ cloud-cam-viewer/
 ├── set_code.py              # save a verification code
 ├── check_code.py            # verify a verification code
 ├── config.example.py        # settings template (copy to config.py)
+├── cam_keys.example.json    # verification-code file format
 ├── requirements.txt
 ├── README.md  ·  LICENSE  ·  .gitignore
 ```
