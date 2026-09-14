@@ -11,23 +11,29 @@ optional NVIDIA GPU decoding.
 
 ## Features
 
-- 🔐 Login to **EZVIZ** or **Hik-Connect** (auto region detection)
+- 🔐 Login to **EZVIZ** or **Hik-Connect** (auto region detection), with the
+  session **reused across restarts** — no repeated CAPTCHA / "new device" 2FA
+- 🔑 **Fetches verification codes from the cloud** (`cloudcam keys`) — no more
+  reading codes off device labels
 - 📷 Lists all devices & **NVR channels** as separate cameras (e.g. 8 NVRs → 32 cameras)
 - 🔓 **Decrypts encrypted streams** with the device verification code (AES). Auto-detects
   transport (**RTP**, **MPEG-PS**, MPEG-TS) and codec (**H.264** & **H.265/HEVC**) per camera —
   no per-device configuration
 - 🟢 Auto-detects clear vs encrypted vs wrong-code per camera
+- 📉 **Substream for grids**, with an `auto` mode that falls back to the main
+  stream on cameras that have no substream
 - ⚡ Optional **GPU (NVIDIA NVDEC)** decoding with software fallback
-- ♻️ 24/7 — auto-reconnect, periodic token refresh
+- ♻️ 24/7 — auto-reconnect, frozen-stream watchdog, age-based token refresh
 - 🖥️ Grid view, fullscreen (keys `1`–`9`), live status (FPS, reconnects)
-- 🛠️ Tools to **save** (`set_code.py`) and **verify** (`check_code.py`) verification codes
+- 🛠️ Tools to **save** (`set_code.py`) and **verify** (`check_code.py`) codes by hand
 
 ## How it works
 
 ```
-Cloud login (your account)  →  device/stream metadata  →  connect to cloud VTM relay
-   →  receive RTP/HEVC or MPEG-PS packets  →  decrypt NAL bodies (AES, key = verification code)
-   →  remux to MPEG-TS  →  decode & display
+Cloud login (session reused)  →  device/stream metadata (cached per account)
+   →  connect to cloud VTM relay  →  receive RTP/HEVC, MPEG-PS or MPEG-TS packets
+   →  decrypt NAL bodies (AES, key = verification code)  →  Annex-B over local HTTP
+   →  jitter buffer (paced at the measured frame rate)  →  ffmpeg  →  decode & display
 ```
 
 The camera **verification code** (the code you set when adding the device to the app, usually
@@ -52,7 +58,8 @@ venv\Scripts\activate
 # Linux/macOS:
 source venv/bin/activate
 
-pip install -r requirements.txt
+pip install -e .            # also installs the `cloudcam` command
+pip install -e ".[viewer]"  # ...add OpenCV if you want the video window
 
 cp config.example.py config.py     # then edit config.py
 ```
@@ -65,13 +72,39 @@ EMAIL    = "you@example.com"
 PASSWORD = "your_password"
 ```
 
+Credentials can also come from `CLOUDCAM_EMAIL` / `CLOUDCAM_PASSWORD` (or
+`--email` / `--password`) instead of `config.py` — every setting has a
+`CLOUDCAM_*` environment variable.
+
 ## Usage
 
 ```bash
 python app.py                       # list cameras, pick, view (grid/fullscreen)
 python single.py <SERIAL>           # one camera, fullscreen
 
-# Encrypted cameras — manage verification codes:
+cloudcam cameras                    # list cameras
+cloudcam snapshot <SERIAL>          # save one JPEG
+cloudcam view                       # grid viewer (needs the `viewer` extra)
+```
+
+**Encrypted cameras — get the verification codes.** The cloud knows them, so
+ask it instead of reading codes off device labels:
+
+```bash
+cloudcam keys                       # all devices; prints what it saved
+```
+
+The first run asks the cloud to elevate the session and emails you a 2FA code.
+Enter it once — every remaining camera is then fetched without another code:
+
+```bash
+cloudcam keys --code 123456
+```
+
+Codes land in `cam_keys.json`. Manual entry still works when you already know a
+code, or when the account cannot elevate:
+
+```bash
 python check_code.py <SERIAL> <CODE>        # verify a code (saves it if correct)
 python check_code.py <SERIAL> <CODE> all    # all 4 NVR channels
 python set_code.py   <SERIAL> <CODE>        # save a code directly
@@ -86,9 +119,15 @@ For an NVR, the verification code is per-device and applies to all its channels.
 ```
 cloud-cam-viewer/
 ├── cloudcam/                # core library (package)
-│   ├── client.py            # cloud login (EZVIZ & Hik-Connect), device list
-│   ├── stream_manager.py    # per-camera threads, reconnect, token refresh, GPU
+│   ├── api.py               # high-level facade: CloudCam / Stream / Camera
+│   ├── cli.py               # `cloudcam` command (cameras, keys, snapshot, view)
+│   ├── client.py            # cloud login, session reuse, verification-code fetch
+│   ├── identity.py          # per-install terminal id (featureCode)
+│   ├── keys.py              # verification-code store + cloud fetch (2FA flow)
+│   ├── settings.py          # Settings: config.py / CLOUDCAM_* env / defaults
+│   ├── stream_manager.py    # per-camera processes, reconnect, watchdog, GPU
 │   ├── vtm_cache.py         # account-level metadata cache + channel gate
+│   ├── viewer.py            # OpenCV grid viewer (optional `viewer` extra)
 │   └── decrypt_proxy.py     # RTP/HEVC + MPEG-PS depacketize, AES decrypt, paced output
 ├── tests/                   # pytest (cloud is stubbed — no account needed)
 ├── app.py                   # main multi-camera viewer (grid / fullscreen)
@@ -101,6 +140,30 @@ cloud-cam-viewer/
 ```
 
 > Run all scripts from the project root (`python app.py`, `python check_code.py ...`).
+
+## Library API
+
+The package works without `config.py` and without OpenCV:
+
+```python
+from cloudcam import CloudCam
+
+cam = CloudCam(email="you@example.com", password="…", platform="hikconnect")
+cam.login()                      # resumes a saved session when there is one
+
+for c in cam.cameras():
+    print(c.serial, c.channel, c.name)
+
+cam.fetch_keys()                 # verification codes from the cloud (once)
+
+stream = cam.open(serial, channel=1)
+stream.wait_first_frame()
+jpeg = stream.snapshot()         # bytes
+for frame in stream.frames():    # numpy BGR
+    ...
+stream.close()
+cam.close()
+```
 
 ## Stream quality & speed (what the code does for you)
 
@@ -147,10 +210,25 @@ each one measured against real cameras:
 - **Channel gate.** An NVR can be online while the channel you asked for does not
   exist; that stream never starts. The cached page list is checked first, so you
   get an immediate, clear error instead of a 20 s timeout.
-- **Substream for grids** (`Settings(substream=True)`). Asks the cloud for the
+- **Substream for grids** (`STREAM_MODE = "sub"`). Asks the cloud for the
   camera's small profile — measured **640×360 at ~0.11 Mbit/s** versus ~4 Mbit/s
   for the main stream (36× less traffic and CPU) — which is what a grid tile
   actually needs. Use the main stream for fullscreen.
+- **`STREAM_MODE = "auto"`.** Not every camera has a substream (battery models,
+  some NVR channels): asking for one gets you a black tile. Auto asks for the
+  substream first and falls back to the main stream if nothing arrives within
+  6 s, so a mixed account needs no per-camera configuration.
+- **The session is reused, not re-created.** Logging in on every start is what
+  makes the cloud demand a CAPTCHA (code 1015) or "new device" 2FA — a 24/7
+  process that restarts hits this constantly. The saved session is resumed,
+  refreshed by *age* when stale (not on a fixed hourly timer, which is wrong
+  after sleep/reconnect), and a full login is the last resort; failed logins
+  back off 60 s → 30 min instead of hammering.
+- **Per-install terminal id.** `featureCode` identifies the "terminal" to the
+  cloud, and every copy of this project used to send the *same* hardcoded one —
+  so unrelated users shared one terminal, and one person's activity triggered
+  the other's rate limits. It is now derived from the machine and persisted to
+  `feature_code.txt`, so it is stable across restarts but unique per install.
 
 ## Development
 
@@ -160,8 +238,10 @@ pytest                 # no cloud account needed: the tests stub pyezvizapi
 ```
 
 The test suite deliberately guards the failure modes above, including ones that
-are invisible at runtime (e.g. `-fflags nobuffer` silently discarding the first
-parameter sets, or a cache invalidation losing its guard).
+are invisible at runtime: `-fflags nobuffer` silently discarding the first
+parameter sets, a cache invalidation losing its guard, the shared hardcoded
+`featureCode` creeping back in, the 2FA code being re-sent per camera instead of
+once per session, or settings not reaching the per-camera child processes.
 
 ## Notes & limits
 
@@ -170,6 +250,10 @@ parameter sets, or a cache invalidation losing its guard).
   and it is the trade the mobile apps make too.
 - Source FPS is camera/bandwidth-limited (often ~9–15 fps for HD cloud streams).
 - Simultaneous viewing is limited by your CPU/GPU, bandwidth, and the cloud's concurrent-stream limits.
+- `cloudcam keys` needs the account to allow 2FA elevation. Some accounts
+  (shared devices, sub-accounts) will not return codes — enter them manually then.
+- Selective-encryption auto-detection currently applies to the **RTP** path.
+  On the MPEG-PS path every NAL body is decrypted.
 - Built on [`pyezvizapi`](https://pypi.org/project/pyezvizapi/) for the cloud stream transport.
 
 ## Disclaimer
