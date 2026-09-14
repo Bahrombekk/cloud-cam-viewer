@@ -1,6 +1,7 @@
 """cloudcam buyruq qatori interfeysi.
 
     cloudcam cameras                 # kameralar ro'yxati
+    cloudcam keys                    # tasdiqlash kodlarini bulutdan olish
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
     cloudcam view                    # OpenCV grid ko'ruvchi (viewer kerak)
 
@@ -63,6 +64,32 @@ def cmd_snapshot(args) -> int:
     return 0
 
 
+def cmd_keys(args) -> int:
+    """Tasdiqlash kodlarini bulutdan olib `cam_keys.json` ga saqlaydi."""
+    cam = _cam(args)
+    try:
+        serials = args.serial or None
+        res = cam.fetch_keys(serials, mfa_code=args.code, overwrite=args.overwrite)
+        if res.needs_mfa:
+            info = cam.send_key_2fa()
+            where = (info.get("contact") or {}).get("fuzzyContact", "emailingizga")
+            print(f"2FA kod {where} yuborildi. Qayta ishga tushiring:\n"
+                  f"  cloudcam keys --code <KOD>")
+            return 2
+        for serial, code in sorted(res.fetched.items()):
+            print(f"{serial}  {code}")
+        if res.skipped:
+            print(f"({len(res.skipped)} ta kod allaqachon bor — "
+                  f"qayta olish uchun --overwrite)")
+        for serial, why in sorted(res.failed.items()):
+            print(f"{serial}  XATO: {why}")
+        if not res.fetched and not res.skipped:
+            print("(kod olinmadi)")
+    finally:
+        cam.close()
+    return 0
+
+
 def cmd_view(args) -> int:
     try:
         import cv2  # noqa: F401
@@ -90,6 +117,13 @@ def main(argv=None) -> int:
     sp.add_argument("--quality", type=int, default=85)
     sp.add_argument("--timeout", type=float, default=15.0)
     sp.set_defaults(fn=cmd_snapshot)
+
+    kp = sub.add_parser("keys", help="tasdiqlash kodlarini bulutdan olish")
+    kp.add_argument("serial", nargs="*", help="bo'sh qoldirilsa — hamma qurilma")
+    kp.add_argument("--code", default=None, help="emailga kelgan 2FA kodi")
+    kp.add_argument("--overwrite", action="store_true",
+                    help="saqlangan kodlarni ham qayta olish")
+    kp.set_defaults(fn=cmd_keys)
 
     vp = sub.add_parser("view", help="OpenCV grid ko'ruvchi")
     vp.set_defaults(fn=cmd_view)

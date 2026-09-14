@@ -25,6 +25,17 @@ DISPLAY_WIDTH    = 1280     # ko'rsatish o'lchami (grid uchun kichraytiring: 854
 DISPLAY_HEIGHT   = 720
 USE_GPU          = True     # NVIDIA NVDEC; ishlamasa avtomatik dasturiy dekodga o'tadi
 
+# Bulutdan qaysi oqim so'ralsin:
+#   "main" — asosiy (to'liq ekran uchun)
+#   "sub"  — kichik oqim (grid uchun: ~36 barobar kam trafik)
+#   "auto" — avval kichik oqim sinaladi, u bo'lmasa asosiysiga qaytiladi
+STREAM_MODE      = "main"
+SUBSTREAM        = False    # eski bayroq; STREAM_MODE="sub" bilan bir xil
+
 # === FAYLLAR ===
-TOKEN_FILE  = "token.json"
+TOKEN_FILE  = "token.json"   # sessiya shu yerda saqlanadi -> qayta login qilinmaydi
 CAMKEY_FILE = "cam_keys.json"
+
+# Terminal kodi (featureCode) avtomatik hisoblanadi va `feature_code.txt` ga
+# yoziladi — sozlash shart emas. Faqat bir nechta mustaqil nusxa bitta
+# kompyuterda ishlashi kerak bo'lsa CLOUDCAM_FEATURE_CODE bilan ajrating.

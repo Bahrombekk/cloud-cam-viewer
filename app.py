@@ -101,12 +101,16 @@ def make_grid(frames, labels, statuses, cols=None):
 
 
 def main():
-    print("🔐 Login qilinmoqda...")
+    print("🔐 Sessiya tayyorlanmoqda...")
     client = CloudClient(config.EMAIL, config.PASSWORD, config.REGION,
                          platform=getattr(config, "PLATFORM", "hikconnect"))
-    client.login()
-    client.save_token(config.TOKEN_FILE)
-    print("✅ Login muvaffaqiyatli!")
+    # Saqlangan sessiya bo'lsa qayta login QILMAYMIZ — har safar login qilish
+    # bulutda CAPTCHA va "yangi qurilma" 2FA sini keltirib chiqaradi
+    # ([[CloudClient.connect]]).
+    mode = client.connect(config.TOKEN_FILE)
+    print({"resumed": "✅ Saqlangan sessiya ishlatildi",
+           "refreshed": "✅ Sessiya yangilandi",
+           "login": "✅ Login muvaffaqiyatli!"}.get(mode, "✅ Tayyor"))
 
     # Faqat haqiqiy kamera ulangan kanallarni ko'rsatamiz (bo'sh NVR slotlari emas)
     print("📡 Kameralar aniqlanmoqda...")
