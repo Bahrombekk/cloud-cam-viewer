@@ -53,5 +53,19 @@ def test_substream_does_not_touch_similar_looking_values():
 
 def test_manager_passes_the_flag_when_enabled():
     text = MGR.read_text(encoding="utf-8")
-    assert re.search(r'get_active\(\)\.substream', text)
-    assert '"--substream"' in text
+    assert re.search(r"\.substream", text)
+    assert "--stream=" in text, "oqim rejimi bola-jarayonga uzatilmayapti"
+
+
+def test_auto_mode_tries_substream_first_then_main():
+    """"auto" — avval KICHIK oqim, kelmasa asosiysi.
+
+    Hamma kamerada substream yo'q (batareyali modellar, ba'zi NVR kanallari):
+    qattiq `sub` bunday kamerada qora ekran, qattiq `main` esa grid'da
+    bekorga 1440p. Tartib va probe muddati shu yerda qo'riqlanadi."""
+    src = (Path(__file__).resolve().parents[1] / "cloudcam" / "decrypt_proxy.py"
+           ).read_text(encoding="utf-8")
+    m = re.search(r'attempts\s*=\s*\[\("sub",\s*STREAM_PROBE_TIMEOUT\),\s*\("main"', src)
+    assert m, "auto rejimda substream BIRINCHI sinalishi kerak"
+    assert decrypt_proxy.STREAM_PROBE_TIMEOUT <= 10.0, \
+        "probe uzoq bo'lsa substreamsiz kamera sekin ochiladi"

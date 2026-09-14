@@ -69,15 +69,32 @@ def test_channel_gate_stays_silent_when_unsure():
 
 def test_cache_is_only_invalidated_when_no_packets_arrived():
     """Manba matnini qo'riqlaymiz: `invalidate` chaqiruvi `got_packets`
-    shartisiz qolsa, bitta kameraning uzilishi butun hisobni sekinlashtiradi."""
+    shartisiz qolsa, bitta kameraning uzilishi butun hisobni sekinlashtiradi.
+
+    Ruxsat etilgan ikki kontekst:
+      * `not got_packets` sharti — oqim ochilgan, lekin paket kelmagan;
+      * `_fail_open` — oqim UMUMAN ochilmagan, ya'ni paket bo'lishi mumkin emas.
+    """
     text = SRC.read_text(encoding="utf-8")
     calls = [m for m in re.finditer(r"vtm_cache\.invalidate\(", text)]
     assert calls, "kesh umuman bekor qilinmayapti"
+    safe = ("not got_packets", "except Exception as e", "def _fail_open")
     for m in calls:
         line_start = text.rfind("\n", 0, m.start())
         context = text[max(0, line_start - 600):m.start()]
-        assert ("not got_packets" in context or "except Exception as e" in context), \
+        assert any(k in context for k in safe), \
             "invalidate() himoyasiz joyda chaqirilgan"
+
+
+def test_open_failure_handler_never_runs_after_streaming_started():
+    """`_fail_open` "paket kelmadi" deb faraz qiladi — shuning uchun u
+    yozuvchi (`PacedWriter`) ishga tushgandan KEYIN chaqirilmasligi kerak,
+    aks holda o'rtada uzilgan oqim butun hisobning keshini o'chirardi."""
+    text = SRC.read_text(encoding="utf-8")
+    writer_at = text.index("PacedWriter(self.wfile")
+    for m in re.finditer(r"_fail_open\(", text):
+        assert m.start() < writer_at, \
+            "_fail_open() oqim boshlangandan keyin chaqirilmoqda"
 
 
 def test_missing_resource_is_not_stale_metadata():

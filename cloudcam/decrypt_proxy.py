@@ -8,13 +8,15 @@ AES-ECB bilan shifrlaydi. Kalit = kamera "Tasdiqlash Kodu" (verification code),
 
 pyezvizapi ning standart "stream proxy" buni ocha olmaydi (u MPEG-PS kutadi).
 Bu yerda biz o'zimiz:
-  1) VTM dan RTP paketlarni o'qiymiz
-  2) RTP/HEVC ni depaketlaymiz (VPS/SPS/PPS + FU/AP) -> Annex-B
+  1) VTM dan paketlarni o'qiymiz (RTP, MPEG-PS yoki MPEG-TS — avto-aniqlanadi)
+  2) RTP/HEVC va RTP/H.264 ni depaketlaymiz (VPS/SPS/PPS + FU/AP) -> Annex-B
   3) Har NAL body ni verification code bilan dekodlaymiz
-  4) ichki ffmpeg orqali MPEG-TS qilib HTTP da uzatamiz (stream_manager o'qiydi)
+  4) Annex-B ni HTTP da to'g'ridan-to'g'ri uzatamiz — ichki ffmpeg YO'Q.
+     Chiqish [[PacedWriter]] orqali tekislanadi; codec'ni tashqi ffmpeg
+     (stream_manager) o'zi aniqlaydi.
 
 Ishga tushirish (odatda app.py/stream_manager chaqiradi):
-    python decrypt_proxy.py <SERIAL> <PORT> <CODE> [CHANNEL]
+    python -m cloudcam.decrypt_proxy <SERIAL> <PORT> <CODE> [CHANNEL] [--stream=auto]
 """
 
 import json
@@ -36,6 +38,7 @@ from pyezvizapi.cloud_stream import open_cloud_stream
 from pyezvizapi.stream import rtp_payload
 
 from . import vtm_cache
+from .identity import feature_code
 from .settings import get_active
 
 # Platformaga qarab klient turi (pagelist to'liq natija qaytarishi uchun muhim)
@@ -51,7 +54,7 @@ def _paged_vtm_page_list(client):
     sess = _rq.Session()
     sess.headers.update({
         "clientType": _CLIENT_TYPE, "lang": "en-US",
-        "featureCode": "1fc28fa018178a1cd1c091b13b2f9f02",
+        "featureCode": feature_code(),        # shu o'rnatmaga xos ([[identity]])
         "sessionId": str(tok.get("session_id")),
     })
     base = None
@@ -151,6 +154,14 @@ class _NalDecryptBase:
         self._pending = []       # None = qaror qabul qilingan (buferlash yo'q)
         self._pending_bytes = 0
         self.inter_note = None   # diagnostika uchun qisqa izoh
+
+    @property
+    def encrypted(self):
+        """Oqim shifrlanganmi: None=hali aniqlanmagan, True/False=qaror.
+
+        Ochiq nom — tashqi kod (`check_code.py`) ilgari `_decrypt` ni
+        to'g'ridan-to'g'ri o'qirdi."""
+        return self._decrypt
 
     def _aes16(self, data) -> bytes:
         return AES.new(self.key, AES.MODE_ECB).decrypt(bytes(data[:16]))
@@ -807,7 +818,7 @@ def _device_names(client):
     sess = _rq.Session()
     sess.headers.update({
         "clientType": _CLIENT_TYPE, "lang": "en-US",
-        "featureCode": "1fc28fa018178a1cd1c091b13b2f9f02",
+        "featureCode": feature_code(),        # shu o'rnatmaga xos ([[identity]])
         "sessionId": str(tok.get("session_id")),
     })
     names = {}
@@ -860,9 +871,27 @@ def list_cameras(client=None):
     return cams
 
 
-def serve(serial: str, port: int, key: str, channel: int = 1, substream: bool = False):
+STREAM_PROBE_TIMEOUT = 6.0     # "auto" rejimda substream shuncha kutiladi
+
+
+def serve(serial: str, port: int, key: str, channel: int = 1,
+          substream: bool = False, stream_mode: str | None = None):
+    """Bitta kamera uchun lokal dekodlovchi HTTP proxy.
+
+    `stream_mode`: "main" | "sub" | "auto". "auto" — avval KICHIK oqim
+    (substream) so'raladi, u [[STREAM_PROBE_TIMEOUT]] ichida kadr bermasa
+    asosiy oqimga qaytiladi.
+
+    Nega "auto" kerak: substream trafikni ~36 barobar kamaytiradi
+    ([[set_substream]]), lekin hamma kamerada ham yo'q (batareyali modellar,
+    ba'zi NVR kanallari). Qattiq `--stream=sub` bunday kamerada qora ekran
+    beradi; qattiq "main" esa grid'da bekorga 1440p tortadi. `hikcloudstream`
+    ham shu yo'ldan boradi: substream'ni sinab ko'rib, kerak bo'lsa asosiysiga
+    qaytadi."""
     client = _make_client()
-    set_substream(substream)
+    mode = stream_mode or ("sub" if substream else "main")
+    if mode not in ("main", "sub", "auto"):
+        mode = "main"
 
     def _flag_keyerror():
         try:
@@ -894,47 +923,91 @@ def serve(serial: str, port: int, key: str, channel: int = 1, substream: bool = 
                 self.send_error(404, "channel not in cloud device list")
                 return
             got_packets = False          # kesh FAQAT paket kelmasa bekor qilinadi
-            try:
-                stream_cm = open_cloud_stream(client, serial, channel=channel,
-                                              client_type=9, refresh_vtm=False, timeout=20.0)
-            except Exception as e:
+
+            def _prime(pkts):
+                """Format (RTP/PS/TS) va codec (H.264/HEVC) ni aniqlash uchun
+                boshlang'ich paketlarni o'qiydi (keyin ular ham uzatiladi)."""
+                buffered, is_rtp, codec = [], None, None
+                for pkt in pkts:
+                    b = bytes(pkt.body)
+                    buffered.append(b)
+                    if is_rtp is None:
+                        is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
+                    if not is_rtp:
+                        break  # MPEG-PS yoki TS
+                    if (b[1] & 0x7F) == HEVC_VIDEO_PT:
+                        pl = rtp_payload(b)
+                        if len(pl) >= 1:
+                            codec = detect_rtp_codec(pl[0])
+                            if codec:
+                                break
+                    # keyframe/aniq marker kelguncha skanerlaymiz (uzun GOP uchun)
+                    if len(buffered) >= 400:
+                        break
+                return buffered, is_rtp, codec
+
+            def _fail_open(e):
+                """Oqim umuman ochilmadi — sababni bayroqlab, 502 qaytaramiz.
+
+                Oflayn qurilma keshni O'CHIRMAYDI — sababi
+                [[_is_missing_resource]] da: kesh HISOB bo'yicha, ya'ni bitta
+                oflayn kamera butun hisobning metama'lumotini bekor qilardi."""
                 if "offline" in str(e).lower() or "unreachable" in str(e).lower():
                     _flag_offline()
                 elif _is_missing_resource(e):
-                    # Qurilma bulut ro'yxatidan tushgan (oflayn) — bu ESKIRGAN
-                    # kesh EMAS, shuning uchun keshni o'chirmaymiz: kesh HISOB
-                    # bo'yicha, ya'ni bitta oflayn kamera tufayli o'sha hisobdagi
-                    # hamma kamera qayta metama'lumot yuklardi.
                     _flag_offline()
                 else:
                     vtm_cache.invalidate(_CACHE_KEY)   # metama'lumot eskirgan bo'lishi mumkin
                 self.send_error(502)
-                return
-            try:
-                with stream_cm as stream:
+
+            # "auto": avval KICHIK oqim, kadr kelmasa asosiysi ([[serve]]).
+            # Har urinish uchun `set_substream` qayta chaqiriladi, chunki u
+            # kutubxonaning URL quruvchisini almashtiradi.
+            attempts = [("sub", STREAM_PROBE_TIMEOUT), ("main", 20.0)] if mode == "auto" \
+                else [(mode, 20.0)]
+            opened = None
+            for want, tmo in attempts:
+                # Bu urinish PROBE mi (ya'ni muvaffaqiyatsizlikda keyingisi bor)
+                is_probe = want == "sub" and mode == "auto"
+                set_substream(want == "sub")
+                try:
+                    cm = open_cloud_stream(client, serial, channel=channel,
+                                           client_type=9, refresh_vtm=False, timeout=tmo)
+                except Exception as e:
+                    if is_probe:
+                        continue                      # substream yo'q — asosiysini sinaymiz
+                    _fail_open(e)
+                    return
+                try:
+                    stream = cm.__enter__()
                     stream.start()
                     pkts = stream.iter_packets()
-                    # Format (RTP/PS/TS) va codec (H.264/HEVC) ni aniqlash uchun
-                    # boshlang'ich paketlarni o'qiymiz (keyin ularni ham uzatamiz)
-                    buffered = []
-                    is_rtp = None
-                    codec = None
-                    for pkt in pkts:
-                        b = bytes(pkt.body)
-                        buffered.append(b)
-                        if is_rtp is None:
-                            is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
-                        if not is_rtp:
-                            break  # MPEG-PS yoki TS
-                        if (b[1] & 0x7F) == HEVC_VIDEO_PT:
-                            pl = rtp_payload(b)
-                            if len(pl) >= 1:
-                                codec = detect_rtp_codec(pl[0])
-                                if codec:
-                                    break
-                        # keyframe/aniq marker kelguncha skanerlaymiz (uzun GOP uchun)
-                        if len(buffered) >= 400:
-                            break
+                    primed = _prime(pkts)
+                except Exception as e:
+                    try:
+                        cm.__exit__(None, None, None)
+                    except Exception:
+                        pass
+                    if is_probe:
+                        continue                      # soket jim qoldi — asosiysiga
+                    # Bu yo'l tashqi `except` ga YETMAYDI (u quyiroqda
+                    # boshlanadi), shuning uchun shu yerda hal qilamiz.
+                    _fail_open(e)
+                    return
+                if primed[0] or not is_probe:
+                    opened = (cm, stream, pkts, primed)
+                    break
+                cm.__exit__(None, None, None)         # substream bo'sh — keyingi urinish
+
+            if opened is None:
+                self.send_error(502)
+                return
+            stream_cm, _stream, pkts, (buffered, is_rtp, codec) = opened
+            try:
+                # `stream_cm` YUQORIDA ochilgan (`__enter__`) — probe uchun
+                # paketlarni o'qish kerak edi; shuning uchun bu yerda `with`
+                # emas, `finally` da yopamiz.
+                try:
                     if not buffered:
                         self.send_error(502)
                         return
@@ -976,6 +1049,8 @@ def serve(serial: str, port: int, key: str, channel: int = 1, substream: bool = 
                                 break          # mijoz uzildi
                     finally:
                         writer.close()
+                finally:
+                    stream_cm.__exit__(None, None, None)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             except Exception as e:
@@ -998,9 +1073,13 @@ def serve(serial: str, port: int, key: str, channel: int = 1, substream: bool = 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         print("Foydalanish: python -m cloudcam.decrypt_proxy "
-              "<SERIAL> <PORT> <CODE> [CHANNEL] [--substream]")
+              "<SERIAL> <PORT> <CODE> [CHANNEL] [--stream=main|sub|auto]")
         sys.exit(1)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--stream=")]
+    mode = flags[-1].split("=", 1)[1] if flags else None
+    if mode is None and "--substream" in sys.argv:
+        mode = "sub"                    # eski bayroq — orqaga moslik
     serve(args[0], int(args[1]), args[2],
           int(args[3]) if len(args) > 3 else 1,
-          substream="--substream" in sys.argv)
+          stream_mode=mode)
