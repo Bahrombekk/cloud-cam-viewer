@@ -13,8 +13,6 @@ import sys
 import threading
 import socket
 import time
-import atexit
-import json
 import os
 import tempfile
 
@@ -24,15 +22,9 @@ from .settings import get_active
 
 
 def load_cam_keys(path=None):
-    """Saqlangan cam_key larni yuklash."""
-    path = path or get_active().camkey_file
-    if os.path.exists(path):
-        try:
-            with open(path) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
+    """Saqlangan tasdiqlash kodlari ([[keys.load]] ustidagi eski nom)."""
+    from . import keys as _keys
+    return _keys.load(path)
 
 
 class CameraStream:
@@ -113,10 +105,14 @@ class CameraStream:
             except OSError:
                 pass
         python = self._python_exe()
-        token_file = get_active().token_file
+        s = get_active()
+        token_file = s.token_file
         # Subprocess sozlamani muhit o'zgaruvchilari orqali oladi (config.py
-        # ga bog'liq emas — kutubxona rejimida ham ishlaydi).
-        env = dict(os.environ, CLOUDCAM_TOKEN_FILE=token_file)
+        # ga bog'liq emas — kutubxona rejimida ham ishlaydi). TO'LIQ sozlama
+        # uzatiladi ([[Settings.to_env]]): ilgari faqat `token_file` ketardi
+        # va bola-jarayon `platform` ni standart qiymatdan olib, noto'g'ri
+        # `clientType` yuborardi.
+        env = dict(os.environ, **s.to_env())
         if self.decrypt and self.key:
             # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan)
             cmd = [
@@ -125,8 +121,9 @@ class CameraStream:
             ]
             # Grid uchun bulutdan KICHIK oqim so'raymiz ([[set_substream]]):
             # plitka baribir ~250-500 px, 1440p esa 36 barobar ortiqcha trafik.
-            if get_active().substream:
-                cmd.append("--substream")
+            mode = "sub" if s.substream else s.stream_mode
+            if mode in ("sub", "auto"):
+                cmd.append(f"--stream={mode}")
         else:
             # Shifrlanmagan kamera — standart pyezvizapi proxy (modul sifatida)
             cmd = [
@@ -360,22 +357,35 @@ class StreamManager:
             self.streams[skey].stop()
             del self.streams[skey]
 
-    def start_token_refresh(self, interval=3600):
-        """
-        Token ni davriy yangilab turish (default: har soatda).
-        Bu MFA/parol qayta so'ralishining oldini oladi — 24/7 ishlash uchun.
-        Token faylga yoziladi, proxy lar uni o'qiydi.
+    # Yangilash kerakmi degan savol shu oraliqda tekshiriladi; yangilashning
+    # o'zi sessiya YOSHIGA qarab bo'ladi ([[CloudClient.is_refresh_needed]]).
+    TOKEN_CHECK_INTERVAL = 60.0
+
+    def start_token_refresh(self, interval=None):
+        """Sessiyani fon threadda yangilab turadi — 24/7 uchun.
+
+        Ilgari bu `time.sleep(3600)` edi: kompyuter uyquga ketib qaytsa yoki
+        oqim uzilib qayta ulansa, sessiya allaqachon eskirgan bo'lsa ham
+        thread hali "soat"ini kutib turardi. Endi har daqiqada sessiya
+        YOSHI tekshiriladi — `hikconnect` dagi `is_refresh_login_needed()`
+        bilan bir xil yondashuv.
+
+        `interval` berilsa — sessiyaning maksimal yoshi (orqaga moslik uchun
+        eski `interval=3600` chaqiruvi ham xuddi shunday ishlaydi).
         """
         if not self.client:
             return
         self._running = True
+        max_age = interval
 
         def loop():
             while self._running:
-                time.sleep(interval)
+                time.sleep(self.TOKEN_CHECK_INTERVAL)
                 if not self._running:
                     break
                 try:
+                    if not self.client.is_refresh_needed(max_age):
+                        continue
                     self.client.refresh_session()
                     self.client.save_token(get_active().token_file)
                     print(f"[{time.strftime('%H:%M:%S')}] 🔄 Token yangilandi")
