@@ -14,7 +14,7 @@ import time
 import cv2
 
 from cloudcam.client import CloudClient
-from cloudcam.stream_manager import StreamManager
+from cloudcam.stream_manager import StreamManager, load_cam_keys
 import config
 
 
@@ -25,25 +25,28 @@ def main():
     serial = sys.argv[1]
     decrypt = "--decrypt" in sys.argv
 
-    print("🔐 Login...")
+    print("🔐 Sessiya tayyorlanmoqda...")
     client = CloudClient(config.EMAIL, config.PASSWORD, config.REGION,
                          platform=getattr(config, "PLATFORM", "hikconnect"))
-    client.login()
-    client.save_token(config.TOKEN_FILE)
-    print("✅ Login!\n")
+    # Saqlangan sessiya bo'lsa qayta login QILMAYMIZ ([[CloudClient.connect]])
+    mode = client.connect(config.TOKEN_FILE)
+    print(f"✅ Tayyor ({mode})\n")
 
     manager = StreamManager(client=client)
     manager.start_token_refresh(interval=3600)
-    manager.add(serial, channel=1, decrypt=decrypt, width=1280, height=720)
+    # `add()` qaytargan oqimni SAQLAYMIZ: `manager.streams` kaliti
+    # (serial, channel) juftligi, ya'ni `streams[serial]` KeyError beradi.
+    stream = manager.add(serial, channel=1, decrypt=decrypt, width=1280, height=720,
+                         key=load_cam_keys().get(serial) or "AUTO")
 
     print("🎥 Stream ochilmoqda... (chiqish: 'q')")
     window = f"EZVIZ: {serial}"
 
     try:
         while True:
-            frame = manager.streams[serial].get_frame()
+            frame = stream.get_frame()
             if frame is not None:
-                st = manager.streams[serial].status()
+                st = stream.status()
                 color = (0, 255, 0) if st["connected"] else (0, 0, 255)
                 cv2.rectangle(frame, (0, 0), (frame.shape[1], 30), (0, 0, 0), -1)
                 cv2.putText(frame, f"{serial}  {st['fps']}fps  "

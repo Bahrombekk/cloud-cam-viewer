@@ -25,7 +25,11 @@ logging.basicConfig(level=logging.CRITICAL)
 
 import config
 from cloudcam import decrypt_proxy
-from cloudcam.decrypt_proxy import HevcRtpDecryptor, PsStreamDecryptor
+from cloudcam.decrypt_proxy import (
+    HEVC_VIDEO_PT, H264RtpDecryptor, HevcRtpDecryptor, PsStreamDecryptor,
+    detect_rtp_codec,
+)
+from pyezvizapi.stream import rtp_payload
 from pyezvizapi.cloud_stream import open_cloud_stream
 
 
@@ -33,6 +37,8 @@ def check(client, serial, code, channel=1, timeout=30):
     """Qaytaradi: 'correct' | 'wrong' | 'clear' | 'timeout' | 'nostream'."""
     key = code or "AUTO"
     dec = None
+    is_rtp = None
+    pending = []          # codec aniqlanmaguncha paketlar shu yerda kutadi
     t0 = time.time()
     try:
         with open_cloud_stream(client, serial, channel=channel,
@@ -40,11 +46,35 @@ def check(client, serial, code, channel=1, timeout=30):
             s.start()
             for pkt in s.iter_packets(max_packets=5000):
                 b = bytes(pkt.body)
-                if dec is None:
+                if is_rtp is None:
                     is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
-                    dec = HevcRtpDecryptor(key) if is_rtp else PsStreamDecryptor(key)
+                if dec is None:
+                    if not is_rtp:
+                        dec = PsStreamDecryptor(key)   # PS o'zi H.264/HEVC ni aniqlaydi
+                    else:
+                        # RTP: codec'ni ANIQLAYMIZ. Ilgari bu yerda doim HEVC
+                        # dekodlovchi yaratilardi — H.264 kamerada esa param-set
+                        # hech qachon topilmay, kod TO'G'RI bo'lsa ham "timeout"
+                        # chiqardi.
+                        pending.append(b)
+                        if (b[1] & 0x7F) == HEVC_VIDEO_PT:
+                            pl = rtp_payload(b)
+                            codec = detect_rtp_codec(pl[0]) if len(pl) >= 1 else None
+                            if codec:
+                                dec = (H264RtpDecryptor(key) if codec == "h264"
+                                       else HevcRtpDecryptor(key))
+                        if dec is None:
+                            if len(pending) > 400 or time.time() - t0 > timeout:
+                                return "timeout"
+                            continue
+                        for old in pending:            # kutgan paketlarni ham beramiz
+                            dec.feed(old)
+                        pending = []
+                        if dec.encrypted is not None or dec.key_error:
+                            break
+                        continue
                 dec.feed(b)
-                if dec._decrypt is not None or dec.key_error:
+                if dec.encrypted is not None or dec.key_error:
                     break
                 if time.time() - t0 > timeout:
                     return "timeout"
@@ -54,9 +84,9 @@ def check(client, serial, code, channel=1, timeout=30):
         return "nostream"
     if dec.key_error:
         return "wrong"
-    if dec._decrypt is False:
+    if dec.encrypted is False:
         return "clear"
-    if dec._decrypt is True:
+    if dec.encrypted is True:
         return "correct"
     return "timeout"
 
