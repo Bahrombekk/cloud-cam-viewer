@@ -231,7 +231,12 @@ class CameraStream:
 
                 # Shifr kodi xato bo'lsa — proxy bayroq qo'ygan bo'ladi
                 if os.path.exists(self._keyerr_path()):
-                    self.error = "Shifr kodi xato! cam_keys.json ni tekshiring"
+                    # Kod umuman yo'q bo'lsa "AUTO" beriladi — bunda "kod xato"
+                    # deyish chalg'itadi: foydalanuvchi mavjud bo'lmagan faylni
+                    # tekshirishga tushadi. Nima qilish kerakligini aytamiz.
+                    self.error = ("Shifr kodi yo'q — `cloudcam keys` ishga tushiring"
+                                  if not self.key or self.key == "AUTO"
+                                  else "Shifr kodi xato! cam_keys.json ni tekshiring")
                     self.connected = False
                     break  # qayta urinish foydasiz (kod baribir xato)
 
