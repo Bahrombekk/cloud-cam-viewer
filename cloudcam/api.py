@@ -141,17 +141,52 @@ class CloudCam:
         self.client = CloudClient(s.email, s.password, s.region, platform=s.platform)
         self._mgr = StreamManager(client=self.client, settings=s)
         self._logged_in = False
+        self.auth_mode: Optional[str] = None   # "resumed" | "refreshed" | "login"
+        self._key_fetch_blocked = False        # 2FA ko'tarilmagan -> avto-olishni to'xtatamiz
 
     # ── hisob ────────────────────────────────────────────────────────
-    def login(self) -> "CloudCam":
-        self.client.login()
-        self.client.save_token(self.settings.token_file)
+    def login(self, *, force: bool = False) -> "CloudCam":
+        """Sessiyani tayyorlaydi.
+
+        Standart holatda TO'G'RIDAN-TO'G'RI login QILINMAYDI: avval saqlangan
+        token, keyin refresh, va faqat oxirida parol bilan kirish
+        ([[CloudClient.connect]]). Har ishga tushirishda login qilish bulutda
+        CAPTCHA va "yangi qurilma" 2FA sini keltirib chiqaradi.
+
+        `force=True` — eski xatti-harakat (majburiy to'liq login).
+        """
+        if force:
+            self.client.login()
+            self.client.save_token(self.settings.token_file)
+            self.auth_mode = "login"
+        else:
+            self.auth_mode = self.client.connect(self.settings.token_file)
         self._logged_in = True
         return self
 
     def refresh_token(self) -> None:
         self.client.refresh_session()
         self.client.save_token(self.settings.token_file)
+
+    # ── tasdiqlash kodlari ───────────────────────────────────────────
+    def fetch_keys(self, serials=None, *, mfa_code=None, overwrite=False):
+        """Kameralarning tasdiqlash kodlarini BULUTDAN olib saqlaydi.
+
+        `serials=None` -> hisobdagi hamma qurilma. Natija [[keys.FetchResult]];
+        `needs_mfa` bo'lsa `send_key_2fa()` chaqirib, emaildagi kodni
+        `mfa_code` bilan qayta chaqiring."""
+        from . import keys as _keys
+        if serials is None:
+            serials = sorted({c.serial for c in self.cameras()})
+        res = _keys.fetch(self.client, serials, mfa_code=mfa_code,
+                          overwrite=overwrite, path=self.settings.camkey_file)
+        if mfa_code and not res.needs_mfa:
+            self._key_fetch_blocked = False    # sessiya ko'tarildi
+        return res
+
+    def send_key_2fa(self):
+        """Tasdiqlash kodlarini olish uchun 2FA kodini emailga yuboradi."""
+        return self.client.send_verification_2fa()
 
     def start_token_refresh(self, interval: int = 3600) -> None:
         """Fon threadda davriy token yangilash (24/7 uchun)."""
@@ -166,15 +201,29 @@ class CloudCam:
 
     def open(self, serial: str, channel: int = 1, *, decrypt: bool = True,
              key: Optional[str] = None, width: Optional[int] = None,
-             height: Optional[int] = None) -> Stream:
+             height: Optional[int] = None, auto_key: bool = True) -> Stream:
         """Kamerani ochadi (fon threadda ulanadi). `Stream` qaytaradi.
 
-        key=None -> `cam_keys.json` dan olinadi; topilmasa "AUTO" (toza oqim
-        avtomatik ishlaydi, shifrli bo'lsa xato beradi). Hik-Connect uchun
-        `decrypt=True` (RTP/HEVC yoki MPEG-PS) standart.
+        key=None -> `cam_keys.json` dan olinadi; u yerda ham bo'lmasa va
+        `auto_key` yoqilgan bo'lsa BULUTDAN so'raladi ([[keys.fetch]]).
+        Bulut 2FA talab qilsa jimgina "AUTO" ga qaytamiz — oqimni ochish
+        to'xtab qolmasligi kerak; kodni `fetch_keys()` bilan ataylab oling.
         """
         if key is None:
-            key = load_cam_keys(self.settings.camkey_file).get(serial) or "AUTO"
+            key = load_cam_keys(self.settings.camkey_file).get(serial)
+        if key is None and auto_key and not self._key_fetch_blocked:
+            try:
+                got = self.fetch_keys([serial])
+                key = got.fetched.get(serial)
+                if got.needs_mfa:
+                    # 2FA ko'tarilmagan — qolgan kameralar uchun urinish ham
+                    # xuddi shunday tugaydi. 32 kameralik hisobda bu 32 ta
+                    # befoyda so'rov; bir marta bilib, to'xtaymiz.
+                    self._key_fetch_blocked = True
+            except Exception:
+                key = None
+        if key is None:
+            key = "AUTO"
         cs = self._mgr.add(serial, channel=channel, decrypt=decrypt,
                            width=width, height=height, key=key)
         return Stream(cs)
