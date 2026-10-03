@@ -31,7 +31,10 @@ def main():
             pass
 
     for i in range(0, len(args), 2):
-        serial, code = args[i], args[i + 1].strip().upper()
+        # Registr O'ZGARTIRILMAYDI: kod = AES kalit (registrga sezgir), ilovada
+        # o'zgartirilgan kod kichik harfli bo'lishi mumkin. Ishonchingiz komil
+        # bo'lmasa check_code.py dan foydalaning — u ikkala variantni sinaydi.
+        serial, code = args[i], args[i + 1].strip()
         keys[serial] = code
         print(f"✅ {serial} -> {code}")
 

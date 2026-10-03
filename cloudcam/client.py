@@ -137,27 +137,37 @@ class CloudClient:
         return r.json().get("systemConfigInfo", {})
 
     def get_devices(self):
-        """Barcha kameralar: {serial: {name, status, model, channels}}"""
-        r = self.session.get(
-            f"https://{self.api_url}/v3/userdevices/v1/devices/pagelist",
-            params={
-                "filter": "CLOUD,CONNECTION,SWITCH,STATUS,WIFI,NODISTURB,"
-                          "P2P,CHANNEL,VTM,FEATURE,UPGRADE,VIDEO_QUALITY,QOS",
-                "groupId": -1, "limit": 50, "offset": 0,
-            },
-            timeout=25,
-        )
-        data = r.json()
+        """Barcha kameralar: {serial: {name, status, model, channels}}
+
+        Sahifalab oladi — bulut bir so'rovda ko'pi bilan 50 ta qurilma beradi,
+        avval 50 dan ortig'i jimgina tushib qolardi."""
         result = {}
-        for dev in data.get("deviceInfos", []):
-            serial = dev.get("deviceSerial")
-            if serial:
-                result[serial] = {
-                    "name": dev.get("name", serial),
-                    "status": dev.get("status", 0),
-                    "model": dev.get("deviceType", ""),
-                    "channels": dev.get("channelNumber", 1),
-                }
+        offset = 0
+        for _ in range(40):          # 40 x 50 = 2000 qurilma — cheksiz tsikldan himoya
+            r = self.session.get(
+                f"https://{self.api_url}/v3/userdevices/v1/devices/pagelist",
+                params={
+                    "filter": "CLOUD,CONNECTION,SWITCH,STATUS,WIFI,NODISTURB,"
+                              "P2P,CHANNEL,VTM,FEATURE,UPGRADE,VIDEO_QUALITY,QOS",
+                    "groupId": -1, "limit": 50, "offset": offset,
+                },
+                timeout=25,
+            )
+            data = r.json()
+            devs = data.get("deviceInfos") or []
+            for dev in devs:
+                serial = dev.get("deviceSerial")
+                if serial:
+                    result[serial] = {
+                        "name": dev.get("name", serial),
+                        "status": dev.get("status", 0),
+                        "model": dev.get("deviceType", ""),
+                        "channels": dev.get("channelNumber", 1),
+                    }
+            page = data.get("page") or {}
+            if not devs or not page.get("hasNext"):
+                break
+            offset += len(devs)
         return result
 
     def send_mfa_code(self):

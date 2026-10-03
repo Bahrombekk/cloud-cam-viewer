@@ -17,10 +17,53 @@ import atexit
 import json
 import os
 import tempfile
+import weakref
 
 import numpy as np
 
 from .settings import get_active
+
+# Shifr kodi proxy subprocess'iga shu muhit o'zgaruvchisi orqali uzatiladi
+# (decrypt_proxy ham shu nomni o'qiydi — ikkalasida bir xil bo'lishi shart).
+KEY_ENV = "CLOUDCAM_CAM_KEY"
+# Shu o'rnatilgan bo'lsa proxy stdin'ni kuzatadi: ota jarayon o'lsa OS quvurni
+# yopadi (EOF) va proxy o'zi chiqadi — yetim proxy portni band qilib qolmaydi.
+PARENT_WATCH_ENV = "CLOUDCAM_PARENT_WATCH"
+
+
+def _stop_proc(proc, timeout=3.0):
+    """Jarayonni to'xtatib, TUGASHINI kutadi (kerak bo'lsa kill).
+
+    Faqat terminate() yetmaydi: Linux'da zombie qoladi, Windows'da esa port
+    qisqa vaqt band bo'lib, yangi proxy shu portga ulanolmasdi."""
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=timeout)
+    except Exception:
+        pass
+    for f in (proc.stdin, proc.stdout, proc.stderr):   # quvur dastaklari oqib ketmasin
+        try:
+            if f:
+                f.close()
+        except Exception:
+            pass
+
+
+# Ishlab turgan oqimlar — dastur chiqishida (atexit) proxy/ffmpeg qolmasin.
+_LIVE = weakref.WeakSet()
+
+
+@atexit.register
+def _stop_all_live():
+    for s in list(_LIVE):
+        s.stop()
 
 
 def load_cam_keys(path=None):
@@ -104,8 +147,8 @@ class CameraStream:
         return venv_py if os.path.exists(venv_py) else sys.executable
 
     def _start_proxy(self):
-        if self.proxy_proc:
-            self.proxy_proc.terminate()
+        _stop_proc(self.proxy_proc)
+        self.proxy_proc = None
         # eski bayroqlarni tozalaymiz (yangi urinish)
         for p in (self._keyerr_path(), self._offline_path()):
             try:
@@ -113,15 +156,25 @@ class CameraStream:
             except OSError:
                 pass
         python = self._python_exe()
-        token_file = get_active().token_file
+        s = get_active()
+        # ABSOLUT yo'l: proxy cwd=loyiha ildizi (pip o'rnatilganda site-packages)
+        # bilan ishlaydi, token esa joriy papkaga yozilgan — nisbiy yo'l boshqa
+        # faylni qidirib proxy darhol yiqilardi.
+        token_file = os.path.abspath(s.token_file)
         # Subprocess sozlamani muhit o'zgaruvchilari orqali oladi (config.py
-        # ga bog'liq emas — kutubxona rejimida ham ishlaydi).
-        env = dict(os.environ, CLOUDCAM_TOKEN_FILE=token_file)
+        # ga bog'liq emas — kutubxona rejimida ham ishlaydi). Platforma ham
+        # kerak: busiz proxy standart "hikconnect" clientType'ini ishlatardi.
+        env = dict(os.environ, CLOUDCAM_TOKEN_FILE=token_file,
+                   CLOUDCAM_PLATFORM=s.platform)
         if self.decrypt and self.key:
-            # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan)
+            # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan).
+            # Kod = AES kalit: argv'da process ro'yxatida hammaga ko'rinardi, shuning
+            # uchun env orqali beriladi ("-" — "kalitni env'dan ol" belgisi).
+            env[KEY_ENV] = self.key
+            env[PARENT_WATCH_ENV] = "1"
             cmd = [
                 python, "-m", "cloudcam.decrypt_proxy",
-                self.serial, str(self.port), self.key, str(self.channel),
+                self.serial, str(self.port), "-", str(self.channel),
             ]
             # Grid uchun bulutdan KICHIK oqim so'raymiz ([[set_substream]]):
             # plitka baribir ~250-500 px, 1440p esa 36 barobar ortiqcha trafik.
@@ -137,9 +190,14 @@ class CameraStream:
                 "--listen-port", str(self.port),
                 "--allow-encrypted",
             ]
+        # stdin=PIPE — ota jarayon yiqilsa quvur yopiladi va decrypt_proxy buni
+        # sezib chiqadi ([[PARENT_WATCH_ENV]]). Biz unga hech narsa yozmaymiz.
         self.proxy_proc = subprocess.Popen(
-            cmd, cwd=self._project_root(), env=env,
+            cmd, cwd=self._project_root(), env=env, stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not self.running:          # shu orada stop() chaqirilgan — yetim qolmasin
+            _stop_proc(self.proxy_proc)
+            self.proxy_proc = None
 
     def _ffmpeg_cmd(self):
         url = f"http://127.0.0.1:{self.port}/{self.serial}.ts"
@@ -236,7 +294,11 @@ class CameraStream:
                 if os.path.exists(self._keyerr_path()):
                     self.error = "Shifr kodi xato! cam_keys.json ni tekshiring"
                     self.connected = False
-                    break  # qayta urinish foydasiz (kod baribir xato)
+                    # qayta urinish foydasiz (kod baribir xato) — proxy ham
+                    # yopiladi, aks holda stop() gacha portni band qilib turardi
+                    _stop_proc(self.proxy_proc)
+                    self.proxy_proc = None
+                    break
 
                 # Kamera OFFLINE (VTM ma'lumot bermadi) — proxy bayroq qo'ygan.
                 # Oflayn kamera qaytib kelguncha har 15s da urinish bulutga
@@ -271,9 +333,8 @@ class CameraStream:
             except Exception:
                 pass
             finally:
-                if self.ffmpeg_proc:
-                    self.ffmpeg_proc.terminate()
-                    self.ffmpeg_proc = None
+                proc, self.ffmpeg_proc = self.ffmpeg_proc, None
+                _stop_proc(proc)
 
             # Uzildi — qayta ulanishdan oldin kutish
             if self.running:
@@ -304,6 +365,7 @@ class CameraStream:
 
     def start(self):
         self.running = True
+        _LIVE.add(self)
         self._thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread.start()
         self._watch_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
@@ -327,10 +389,10 @@ class CameraStream:
 
     def stop(self):
         self.running = False
-        if self.ffmpeg_proc:
-            self.ffmpeg_proc.terminate()
-        if self.proxy_proc:
-            self.proxy_proc.terminate()
+        _LIVE.discard(self)
+        _stop_proc(self.ffmpeg_proc)
+        _stop_proc(self.proxy_proc)
+        self.proxy_proc = None
 
 
 class StreamManager:

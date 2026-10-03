@@ -98,6 +98,9 @@ START = b"\x00\x00\x00\x01"
 _INTER_SAMPLES = 8              # qaror uchun shuncha inter NAL namunasi
 _INTER_MARGIN = 0.25            # "deshifr" shuncha tuzilishliroq bo'lsagina tanlanadi
 _INTER_MAX_PENDING = 4 << 20    # inter NAL kelmasa shuncha baytdan keyin taslim
+# PS demux buferlari cheki. Eng katta qonuniy birlik — bitta kalit kadr NAL'i
+# (4K I-freym ~1-2 MB); undan ancha katta bo'lsa oqim buzuq, qoldiq tashlanadi.
+_PS_MAX_BUF = 8 << 20
 
 
 def _is_missing_resource(exc) -> bool:
@@ -218,7 +221,8 @@ class _NalDecryptBase:
             return
         self._pending.append((b"i", bytes(nal), hdr))
         self._pending_bytes += len(nal)
-        self._sample_inter(nal, hdr)
+        if self._is_inter_slice(nal, hdr):
+            self._sample_inter(nal, hdr)
         if self._inter_enc is not None:
             self._flush(out)        # qaror chiqdi — navbat TARTIB bilan chiqadi
         else:
@@ -236,6 +240,18 @@ class _NalDecryptBase:
         self._pending_bytes = 0
         for kind, data, hdr in pend or ():
             out += data if kind == b"" else self._inter_bytes(data, hdr)
+
+    @staticmethod
+    def _is_inter_slice(nal, hdr: int) -> bool:
+        """Haqiqiy P/B slice'mi (namuna uchun yaroqli)?
+
+        `_emit_nal` SHIFR ro'yxatida bo'lmagan HAMMA NAL'ni (SEI, AUD, ...) shu
+        yo'lga yuboradi. Ularning body'si slice header emas: masalan toza SEI'ning
+        1-bayti (payload turi) doim bir xil — u "toza" ovozini sun'iy kuchaytirib,
+        aslida shifrli P-slice'larni durang (= TOZA) qarorga tortardi."""
+        if hdr == 1:
+            return (nal[0] & 0x1F) in (1, 2)          # H.264 non-IDR slice / partition A
+        return ((nal[0] >> 1) & 0x3F) <= 9            # HEVC TRAIL/TSA/STSA/RADL/RASL
 
     def _sample_inter(self, nal, hdr: int) -> None:
         """TUZILISH testi: slice header baytlari TAKRORLANADI (bir xil PPS, bir xil
@@ -307,15 +323,57 @@ class _NalDecryptBase:
         self._emit_nal(out, nal)
 
 
-class HevcRtpDecryptor(_NalDecryptBase):
+class _RtpSeqMixin:
+    """RTP ketma-ketlik raqami nazorati.
+
+    FU bo'lagi yo'qolsa, qolgan bo'laklar yopishtirilib NAL davom etardi. Shifrli
+    body'da bu AES 16-bayt bloklarini SURADI — yo'qolgan joydan keyingi butun NAL
+    axlatga aylanadi va dekoderga buzuq slice ketadi. Uzilish aniqlansa yig'ilayotgan
+    NAL tashlanadi (dekoder bitta slice'siz yaxshiroq tiklanadi).
+
+    Seq (SSRC, PT) JUFTI bo'yicha kuzatiladi. Real oqimda (Hik-Connect, o'lchandi)
+    bitta SSRC ichida video (PT 96), metadata (PT 112) va audio (PT 0) keladi va
+    HAR BIRINING O'Z seq hisoblagichi bor. Faqat SSRC bo'yicha sanash har
+    PT almashinuvida soxta "uzilish" berardi (2318 paketda 706 ta)."""
+
+    def _init_seq(self) -> None:
+        self._last_seq = {}    # {(ssrc, pt): oxirgi seq}
+        self.seq_gaps = 0      # diagnostika
+        self.dup_packets = 0
+
+    def _check_seq(self, pkt: bytes) -> bool:
+        """False — paket takroriy (tashlanadi). Uzilishda joriy FU bekor qilinadi."""
+        if len(pkt) < 12:
+            return True
+        seq = (pkt[2] << 8) | pkt[3]
+        stream = (bytes(pkt[8:12]), pkt[1] & 0x7F)      # (SSRC, PT)
+        last = self._last_seq.get(stream)
+        self._last_seq[stream] = seq
+        if last is None:
+            return True
+        if seq == last:
+            self.dup_packets += 1
+            return False
+        # Faqat VIDEO oqimidagi uzilish yig'ilayotgan NAL'ga tegadi (audio
+        # paketi yo'qolsa video FU'ni tashlash — keraksiz buzilish).
+        if seq != (last + 1) & 0xFFFF and stream[1] == HEVC_VIDEO_PT:
+            self.seq_gaps += 1
+            self._cur = None   # yarim NAL — bo'lagi yo'q, tashlaymiz
+        return True
+
+
+class HevcRtpDecryptor(_RtpSeqMixin, _NalDecryptBase):
     """RTP/HEVC paketlarini Annex-B ga aylantirib, NAL body ni dekodlaydi."""
 
     def __init__(self, key: str):
         super().__init__(key)
         self._cur = None       # joriy FU (fragment) yig'indisi
+        self._init_seq()
 
     def feed(self, rtp_packet: bytes) -> bytes:
         """Bitta RTP paketdan Annex-B bayt qaytaradi (bo'sh bo'lishi mumkin)."""
+        if not self._check_seq(rtp_packet):
+            return b""
         if (rtp_packet[1] & 0x7F) != HEVC_VIDEO_PT:
             return b""
         pl = rtp_payload(rtp_packet)
@@ -349,13 +407,14 @@ class HevcRtpDecryptor(_NalDecryptBase):
         return bytes(out)
 
 
-class H264RtpDecryptor(_NalDecryptBase):
+class H264RtpDecryptor(_RtpSeqMixin, _NalDecryptBase):
     """RTP/H.264 paketlarini Annex-B ga aylantirib, NAL body ni dekodlaydi.
     H.264 NAL header 1 bayt; FU-A=28, STAP-A=24, yagona NAL=1..23."""
 
     def __init__(self, key: str):
         super().__init__(key)
         self._cur = None
+        self._init_seq()
 
     def _emit(self, out: bytearray, nal):  # override: 1 baytli NAL header, SPS=tur 7
         if len(nal) < 1:
@@ -364,6 +423,8 @@ class H264RtpDecryptor(_NalDecryptBase):
         self._emit_nal(out, nal)
 
     def feed(self, rtp_packet: bytes) -> bytes:
+        if not self._check_seq(rtp_packet):
+            return b""
         if (rtp_packet[1] & 0x7F) != HEVC_VIDEO_PT:
             return b""
         pl = rtp_payload(rtp_packet)
@@ -427,34 +488,35 @@ class PsStreamDecryptor(_NalDecryptBase):
         self._buf = bytearray()   # demux qilinmagan PS qoldig'i
         self._es = bytearray()    # ajratilgan ES (NAL ga ajratilmagan qoldiq)
         self._enc_off = None      # shifr boshlanish offseti: 0=butun NAL, 1=H.264, 2=HEVC header'dan keyin
-        self._pending = []        # aniqlanmaguncha NAL larni vaqtincha saqlaymiz
+        self._undecided = []      # codec/shifr aniqlanmaguncha NAL larni vaqtincha saqlaymiz
+        self.buf_resets = 0       # diagnostika: bufer chekdan oshib tashlangan holatlar
+        # (`_pending` nomi BAND — u ota klassning inter-qaror navbati)
 
     def _emit(self, out: bytearray, nal) -> None:  # override: codec/variant-aware
         if not nal:
             return
         if self._decrypt is None:                 # codec/shifr hali aniqlanmagan
-            self._pending.append(bytes(nal))
-            res = self._decide(self._pending)
+            self._undecided.append(bytes(nal))
+            res = self._decide(self._undecided)
             if res == "keyerror":
                 self.key_error = True
-                self._pending = []
+                self._undecided = []
                 return
             if res is None:
                 return                            # aniqlanmaguncha garbage chiqarmaymiz
             self.codec, self._enc_off, self._decrypt = res
-            for n in self._pending:               # yig'ilgan NAL larni chiqaramiz
-                self._write_nal(out, n)
-            self._pending = []
+            # Ota klass atamalarida: off>0 = variant A (header toza), off=0 = B-whole.
+            self._clear, self._drop = self._enc_off, 0
+            for n in self._undecided:             # yig'ilgan NAL larni chiqaramiz
+                self._emit_nal(out, n)
+            self._undecided = []
             return
-        self._write_nal(out, nal)
+        self._emit_nal(out, nal)
 
-    def _write_nal(self, out: bytearray, nal) -> None:
-        off = self._enc_off
-        if len(nal) <= off:
-            out += START + bytes(nal)
-            return
-        # off=0 -> butun NAL shifrli (header ham); aks holda header toza, body shifrli
-        out += START + bytes(nal[:off]) + self._decrypt_body(nal[off:])
+    # Chiqish ota klassning `_emit_nal` i orqali — RTP bilan BIR XIL mantiq:
+    # variant A da IRAP + param-set doim deshifrlanadi, inter (P/B) slice esa
+    # oqimdan aniqlanadi ([[_sample_inter]]). Avval PS yo'li HAMMA NAL ni
+    # deshifrlardi — selektiv shifrli kamerada har P-freym buzilardi.
 
     def _aes16(self, data) -> bytes:
         return AES.new(self.key, AES.MODE_ECB).decrypt(bytes(data[:16]))
@@ -512,7 +574,14 @@ class PsStreamDecryptor(_NalDecryptBase):
         pos = 0
         while True:
             sc = b.find(b"\x00\x00\x01", pos)
-            if sc < 0 or sc + 4 > n:
+            if sc < 0:
+                # Start kod yo'q — oxirgi 2 baytdan boshqasi baribir ishlatilmaydi
+                # (ular keyingi chunk bilan start kod hosil qilishi mumkin). Busiz
+                # pos=0 qolib, bufer hech qachon kesilmasdan cheksiz o'sardi.
+                pos = max(pos, n - 2)
+                break
+            if sc + 4 > n:
+                pos = sc               # start koddan oldingi axlat kerak emas
                 break
             code = b[sc + 3]
             if code == 0xBA:  # pack header
@@ -552,6 +621,11 @@ class PsStreamDecryptor(_NalDecryptBase):
                     break
                 pos = end
         self._buf = b[pos:]
+        # Himoya: buzuq oqimda (masalan cheksiz PES'dan keyin start kod hech
+        # kelmasa) to'liqsiz qoldiq ham cheksiz o'smasin.
+        if len(self._buf) > _PS_MAX_BUF:
+            self._buf = self._buf[-2:]
+            self.buf_resets += 1
 
     def _process_es(self) -> bytes:
         """_es dagi to'liq NAL'larni dekodlab Annex-B qaytaradi."""
@@ -562,6 +636,12 @@ class PsStreamDecryptor(_NalDecryptBase):
             starts.append(i)
             i = e.find(b"\x00\x00\x01", i + 3)
         if len(starts) < 2:
+            if len(e) > _PS_MAX_BUF:
+                # NAL chegarasi topilmay chek oshdi. Start koddan oldingi axlatni
+                # tashlaymiz; NAL'ning o'zi chekdan katta bo'lsa — u ham axlat.
+                tail = e[starts[0]:] if starts else bytearray()
+                self._es = tail if len(tail) <= _PS_MAX_BUF else e[-2:]
+                self.buf_resets += 1
             return b""
         out = bytearray()
         for k in range(len(starts) - 1):
@@ -995,12 +1075,52 @@ def serve(serial: str, port: int, key: str, channel: int = 1, substream: bool = 
         server.server_close()
 
 
+KEY_ENV = "CLOUDCAM_CAM_KEY"   # stream_manager.KEY_ENV bilan bir xil
+PARENT_WATCH_ENV = "CLOUDCAM_PARENT_WATCH"   # stream_manager.PARENT_WATCH_ENV bilan bir xil
+
+
+def watch_parent(stream=None, on_exit=None) -> threading.Thread:
+    """Ota jarayon o'lsa proxy ham chiqadi.
+
+    stream_manager proxy'ni stdin=PIPE bilan ochadi va unga hech narsa yozmaydi.
+    Ota jarayon har qanday sabab bilan (hatto majburan o'ldirilsa ham) tugasa,
+    OS quvurni yopadi -> read() EOF qaytaradi. Busiz yetim proxy portni band
+    qilib qolardi va keyingi ishga tushirishda shu port ishlamasdi."""
+    stream = stream if stream is not None else sys.stdin.buffer
+    on_exit = on_exit or (lambda: os._exit(0))
+
+    def run():
+        try:
+            while stream.read(4096):
+                pass
+        except Exception:
+            pass
+        on_exit()
+
+    th = threading.Thread(target=run, daemon=True)
+    th.start()
+    return th
+
+
+def resolve_key(arg: str) -> str:
+    """CODE argumenti "-" bo'lsa kalit muhitdan olinadi (argv'da ko'rinmasin)."""
+    if arg != "-":
+        return arg
+    key = os.environ.get(KEY_ENV)
+    if not key:
+        sys.exit(f"Kalit topilmadi: CODE='-' lekin {KEY_ENV} bo'sh")
+    return key
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         print("Foydalanish: python -m cloudcam.decrypt_proxy "
-              "<SERIAL> <PORT> <CODE> [CHANNEL] [--substream]")
+              "<SERIAL> <PORT> <CODE|-> [CHANNEL] [--substream]\n"
+              f"  CODE='-' -> kalit {KEY_ENV} muhit o'zgaruvchisidan olinadi")
         sys.exit(1)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    serve(args[0], int(args[1]), args[2],
+    if os.environ.get(PARENT_WATCH_ENV) == "1":
+        watch_parent()
+    serve(args[0], int(args[1]), resolve_key(args[2]),
           int(args[3]) if len(args) > 3 else 1,
           substream="--substream" in sys.argv)

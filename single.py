@@ -34,16 +34,17 @@ def main():
 
     manager = StreamManager(client=client)
     manager.start_token_refresh(interval=3600)
-    manager.add(serial, channel=1, decrypt=decrypt, width=1280, height=720)
+    # streams kaliti (serial, channel) — shuning uchun add() qaytarganini ishlatamiz
+    stream = manager.add(serial, channel=1, decrypt=decrypt, width=1280, height=720)
 
     print("🎥 Stream ochilmoqda... (chiqish: 'q')")
     window = f"EZVIZ: {serial}"
 
     try:
         while True:
-            frame = manager.streams[serial].get_frame()
+            frame = stream.get_frame()
             if frame is not None:
-                st = manager.streams[serial].status()
+                st = stream.status()
                 color = (0, 255, 0) if st["connected"] else (0, 0, 255)
                 cv2.rectangle(frame, (0, 0), (frame.shape[1], 30), (0, 0, 0), -1)
                 cv2.putText(frame, f"{serial}  {st['fps']}fps  "

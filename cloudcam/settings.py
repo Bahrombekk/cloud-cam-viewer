@@ -52,6 +52,7 @@ class Settings:
             display_width=getattr(c, "DISPLAY_WIDTH", cls.display_width),
             display_height=getattr(c, "DISPLAY_HEIGHT", cls.display_height),
             use_gpu=getattr(c, "USE_GPU", cls.use_gpu),
+            substream=getattr(c, "SUBSTREAM", cls.substream),
             token_file=getattr(c, "TOKEN_FILE", cls.token_file),
             camkey_file=getattr(c, "CAMKEY_FILE", cls.camkey_file),
         )
@@ -69,6 +70,7 @@ class Settings:
             "display_width": os.environ.get("CLOUDCAM_DISPLAY_WIDTH"),
             "display_height": os.environ.get("CLOUDCAM_DISPLAY_HEIGHT"),
             "use_gpu": os.environ.get("CLOUDCAM_USE_GPU"),
+            "substream": os.environ.get("CLOUDCAM_SUBSTREAM"),
             "token_file": os.environ.get("CLOUDCAM_TOKEN_FILE"),
             "camkey_file": os.environ.get("CLOUDCAM_CAMKEY_FILE"),
         }
@@ -76,8 +78,9 @@ class Settings:
         for k in ("proxy_start_port", "display_width", "display_height"):
             if k in vals:
                 vals[k] = int(vals[k])
-        if "use_gpu" in vals:
-            vals["use_gpu"] = vals["use_gpu"].lower() in ("1", "true", "yes", "on")
+        for k in ("use_gpu", "substream"):
+            if k in vals:
+                vals[k] = vals[k].lower() in ("1", "true", "yes", "on")
         return s.replace(**vals)
 
     @classmethod

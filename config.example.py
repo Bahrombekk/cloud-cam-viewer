@@ -24,6 +24,7 @@ PROXY_START_PORT = 8700     # har kameraga ketma-ket port
 DISPLAY_WIDTH    = 1280     # ko'rsatish o'lchami (grid uchun kichraytiring: 854x480)
 DISPLAY_HEIGHT   = 720
 USE_GPU          = True     # NVIDIA NVDEC; ishlamasa avtomatik dasturiy dekodga o'tadi
+SUBSTREAM        = False    # True — bulutdan KICHIK oqim (grid uchun ~36x kam trafik)
 
 # === FAYLLAR ===
 TOKEN_FILE  = "token.json"

@@ -25,14 +25,27 @@ logging.basicConfig(level=logging.CRITICAL)
 
 import config
 from cloudcam import decrypt_proxy
-from cloudcam.decrypt_proxy import HevcRtpDecryptor, PsStreamDecryptor
+from cloudcam.decrypt_proxy import (HEVC_VIDEO_PT, H264RtpDecryptor, HevcRtpDecryptor,
+                                    PsStreamDecryptor, detect_rtp_codec)
 from pyezvizapi.cloud_stream import open_cloud_stream
+from pyezvizapi.stream import rtp_payload
+
+_CODEC_SCAN = 400   # proxy bilan bir xil: aniq marker kelguncha shuncha paket
+
+
+def _rtp_codec(b: bytes):
+    """RTP video paketidan codec ('h264' | 'hevc') yoki None (noaniq)."""
+    if len(b) < 2 or (b[1] & 0x7F) != HEVC_VIDEO_PT:
+        return None
+    pl = rtp_payload(b)
+    return detect_rtp_codec(pl[0]) if len(pl) >= 1 else None
 
 
 def check(client, serial, code, channel=1, timeout=30):
     """Qaytaradi: 'correct' | 'wrong' | 'clear' | 'timeout' | 'nostream'."""
     key = code or "AUTO"
     dec = None
+    buffered = []   # RTP: codec aniqlanguncha paketlar (keyin dekoderga beriladi)
     t0 = time.time()
     try:
         with open_cloud_stream(client, serial, channel=channel,
@@ -42,8 +55,25 @@ def check(client, serial, code, channel=1, timeout=30):
                 b = bytes(pkt.body)
                 if dec is None:
                     is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
-                    dec = HevcRtpDecryptor(key) if is_rtp else PsStreamDecryptor(key)
-                dec.feed(b)
+                    if not is_rtp:
+                        dec = PsStreamDecryptor(key)
+                    else:
+                        # H.264 ni HEVC dekoderiga bersak to'g'ri kod ham "xato"
+                        # chiqardi — proxy kabi avval codec'ni aniqlaymiz.
+                        buffered.append(b)
+                        codec = _rtp_codec(b)
+                        if codec is None and len(buffered) < _CODEC_SCAN:
+                            if time.time() - t0 > timeout:
+                                return "timeout"
+                            continue
+                        dec = (H264RtpDecryptor(key) if codec == "h264"
+                               else HevcRtpDecryptor(key))
+                if buffered:
+                    for x in buffered:
+                        dec.feed(x)
+                    buffered = []
+                else:
+                    dec.feed(b)
                 if dec._decrypt is not None or dec.key_error:
                     break
                 if time.time() - t0 > timeout:
@@ -95,14 +125,30 @@ def main():
         print("Foydalanish: python check_code.py <SERIAL> [KOD] [KANAL|all]")
         return
     serial = sys.argv[1]
-    code = sys.argv[2] if len(sys.argv) > 2 else "AUTO"
+    code = sys.argv[2].strip() if len(sys.argv) > 2 else "AUTO"
     ch_arg = sys.argv[3] if len(sys.argv) > 3 else "1"
     channels = [1, 2, 3, 4] if ch_arg == "all" else [int(ch_arg)]
 
     client = decrypt_proxy._make_client()
     for ch in channels:
         print(f"🔎 Tekshirilmoqda: {serial} ch{ch} (kod: {code}) ...")
-        report(serial, code, ch, check(client, serial, code, ch))
+        used, result = check_with_case_fallback(client, serial, code, ch)
+        report(serial, used, ch, result)
+
+
+def check_with_case_fallback(client, serial, code, channel=1):
+    """Kod AES kalit — registrga SEZGIR. Yorliqdagi kod katta harfli, lekin
+    foydalanuvchi kichik harf bilan yozishi mumkin; ilovada o'zgartirilgan kod
+    esa kichik harfli bo'lishi ham mumkin. Shuning uchun avval AYNAN berilgani,
+    xato bo'lsa katta harflisi sinaladi. Qaytaradi: (ishlatilgan_kod, natija)."""
+    result = check(client, serial, code, channel)
+    upper = code.upper()
+    if result == "wrong" and upper != code:
+        print(f"   ↻ katta harf bilan qayta: {upper}")
+        r2 = check(client, serial, upper, channel)
+        if r2 == "correct":
+            return upper, r2
+    return code, result
 
 
 if __name__ == "__main__":
