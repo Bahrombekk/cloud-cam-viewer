@@ -102,6 +102,56 @@ _INTER_SAMPLES = 8              # qaror uchun shuncha inter NAL namunasi
 _INTER_MARGIN = 0.25            # "deshifr" shuncha tuzilishliroq bo'lsagina tanlanadi
 _INTER_MAX_PENDING = 4 << 20    # inter NAL kelmasa shuncha baytdan keyin taslim
 
+# --- IRAP darvozasi ---
+# Bulut oqimi GOP O'RTASIDAN boshlanadi va Hik NVR param-setlarni DAVRIY
+# yuboradi, ya'ni birinchi VPS/SPS/PPS dan keyin darhol IDR kelmaydi. O'sha
+# joydan uzatsak dekoder ref kadrlarni topmaydi va tomoshabin boshida KUL
+# RANG/buzilgan tasvir ko'radi. Shuning uchun birinchi IRAP (IDR/CRA) kelguncha
+# slice larni CHIQARMAYMIZ; param-setlar esa o'tadi (dekoderga kerak).
+# Shuncha slice dan keyin darvoza MAJBURAN ochiladi — IRAP belgilamaydigan
+# kamerada tasvir umuman kelmay qolmasin.
+_IRAP_MAX_WAIT = 400
+
+# MPEG-PS demux buferlarining yuqori chegarasi. Start-kodsiz/buzuq kirishda
+# bufer cheksiz o'sardi (jarayon xotirasi oqib ketardi) — chegaradan oshsa
+# oxirgi start-kodga resync qilamiz.
+_MAX_PS_BUF = 4 << 20
+
+
+# ---- Inter-shifr qarorining KESHI --------------------------------------
+# Inter (P/B) slice shifrlanganmi — bu KAMERANING O'ZGARMAS xususiyati, lekin
+# har ochilishda qaytadan aniqlanardi va qaror chiqquncha NAL lar buferda
+# ushlanardi. O'lchov (central-server'da bir xil dekoder): "birinchi paket" dan
+# "ffmpeg ga birinchi kadr" gacha 0.65-0.85s aynan shu kutish edi. Kesh bilan
+# birinchi kadr darhol ketadi; qaror esa BARIBIR tekshiriladi, shuning uchun
+# kamera proshivkasi o'zgarsa kesh o'zini tuzatadi ([[_decide_inter]]).
+
+def _enc_cache_path(key: str) -> str:
+    safe = "".join(c for c in str(key) if c.isalnum() or c in "-_")
+    return os.path.join(vtm_cache.cache_dir(), f"enc-{safe}.json")
+
+
+def _enc_cache_load(key: str):
+    """Oldingi ochilishda aniqlangan qaror (yo'q/buzuq bo'lsa None)."""
+    try:
+        with open(_enc_cache_path(key), encoding="utf-8") as f:
+            return bool(json.load(f)["inter_enc"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _enc_cache_store(key: str, value: bool) -> None:
+    """ATOMAR yozadi — kesh optimizatsiya, xatosi ishni to'xtatmasin."""
+    try:
+        d = vtm_cache.cache_dir()
+        os.makedirs(d, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"inter_enc": bool(value)}, f)
+        os.replace(tmp, _enc_cache_path(key))
+    except (OSError, TypeError, ValueError):
+        pass
+
 
 def _is_missing_resource(exc) -> bool:
     """Qurilma bulut ro'yxatida YO'Q (oflayn kamera ro'yxatdan tushadi).
@@ -137,8 +187,14 @@ class _NalDecryptBase:
     # bo'lsa deshifrlaymiz; B-hint da ko'rsatkich orqali aniqlanadi (ro'yxat kerak emas).
     _H264_ENC_TYPES = {5, 7, 8}                              # IDR, SPS, PPS
     _HEVC_ENC_TYPES = {16, 17, 18, 19, 20, 21, 32, 33, 34}   # IRAP slices + VPS/SPS/PPS
+    # IRAP = tasodifiy kirish nuqtasi (dekoder shu yerdan TOZA boshlashi mumkin).
+    _H264_IRAP = {5}                                         # IDR
+    _HEVC_IRAP = {16, 17, 18, 19, 20, 21}                    # BLA/IDR/CRA
+    # Param-set NAL lari IRAP dan OLDIN ham chiqariladi (dekoderga SPS/PPS kerak).
+    _H264_PARAMSET = {7, 8}
+    _HEVC_PARAMSET = {32, 33, 34}
 
-    def __init__(self, key: str):
+    def __init__(self, key: str, *, cache_key: str | None = None):
         self.key = key.encode().ljust(16, b"\0")[:16]
         self._decrypt = None   # None=noma'lum, True=shifrli, False=toza
         self.key_error = False
@@ -148,12 +204,21 @@ class _NalDecryptBase:
         # Inter (P/B) slice ham shifrlanganmi: None=noma'lum, True/False=qaror.
         # Qaror chiqquncha chiqish NAVBATDA ushlanadi — aks holda birinchi
         # kadrlar noto'g'ri o'qilib ketadi va dekoder xato toshqini beradi.
-        self._inter_enc = None
+        # Kesh bo'lsa ([[_enc_cache_load]]) qaror tayyor keladi va buferlash
+        # UMUMAN qilinmaydi — birinchi kadr darhol ketadi.
+        self._cache_key = cache_key
+        cached = _enc_cache_load(cache_key) if cache_key else None
+        self._inter_enc = cached
+        self._verifying = cached is not None   # keshdagi qaror tekshirilmoqda
         self._inter_clear = []   # namuna: toza body'ning 1-bayti
         self._inter_dec = []     # namuna: AES-deshifrlangan body'ning 1-bayti
-        self._pending = []       # None = qaror qabul qilingan (buferlash yo'q)
+        self._pending = None if self._verifying else []
         self._pending_bytes = 0
         self.inter_note = None   # diagnostika uchun qisqa izoh
+        # IRAP darvozasi ([[_irap_gate]])
+        self._seen_irap = False
+        self._gated = 0          # tashlangan (IRAP dan oldingi) slice soni
+        self.gate_note = None    # diagnostika uchun qisqa izoh
 
     @property
     def encrypted(self):
@@ -206,6 +271,31 @@ class _NalDecryptBase:
         if ps and len(nal) >= hdr + 16:
             self.key_error = True
 
+    def _irap_gate(self, ntype: int, hdr: int) -> bool:
+        """Shu NAL chiqarilsinmi? (birinchi IRAP gacha slice lar tashlanadi)
+
+        Param-set NAL lari doim o'tadi — dekoderga SPS/PPS/VPS kerak. IRAP
+        kelgach darvoza butunlay ochiladi va boshqa hech narsa tashlanmaydi."""
+        if self._seen_irap:
+            return True
+        irap = self._H264_IRAP if hdr == 1 else self._HEVC_IRAP
+        pset = self._H264_PARAMSET if hdr == 1 else self._HEVC_PARAMSET
+        if ntype in irap:
+            self._seen_irap = True
+            if self._gated:
+                self.gate_note = f"IRAP gacha {self._gated} slice tashlandi"
+            return True
+        if ntype in pset:
+            return True
+        self._gated += 1
+        if self._gated > _IRAP_MAX_WAIT:
+            # Kamera GOP'i juda uzun yoki IRAP belgilanmagan — abadiy kutmaymiz.
+            self._seen_irap = True
+            self.gate_note = (f"IRAP kelmadi ({self._gated} slice) — darvoza "
+                              f"majburan ochildi")
+            return True
+        return False
+
     # ---- chiqish: inter-qaror chiqquncha TARTIB bilan buferlanadi ----
 
     def _put(self, out, data: bytes) -> None:
@@ -224,12 +314,12 @@ class _NalDecryptBase:
         return START + bytes(nal)
 
     def _put_inter(self, out, nal, hdr: int) -> None:
-        if self._pending is None:
+        """Inter slice — namunasi YUQORIDA olingan ([[_emit_nal]])."""
+        if self._pending is None:       # qaror bor (yoki keshdan keldi)
             out += self._inter_bytes(nal, hdr)
             return
         self._pending.append((b"i", bytes(nal), hdr))
         self._pending_bytes += len(nal)
-        self._sample_inter(nal, hdr)
         if self._inter_enc is not None:
             self._flush(out)        # qaror chiqdi — navbat TARTIB bilan chiqadi
         else:
@@ -261,14 +351,36 @@ class _NalDecryptBase:
         self._inter_clear.append(body[0])
         self._inter_dec.append(self._aes16(body)[0])
         if len(self._inter_clear) >= _INTER_SAMPLES:
-            n = len(self._inter_clear)
-            d_clear = len(set(self._inter_clear)) / n
-            d_dec = len(set(self._inter_dec)) / n
-            # Teng bo'lsa TOZA qoldiramiz (xavfsizroq: toza P-freymni deshifrlash
-            # uni buzadi), faqat aniq farq bo'lsa deshifrga o'tamiz.
-            self._inter_enc = d_dec + _INTER_MARGIN < d_clear
-            self.inter_note = (f"inter={'SHIFRLI' if self._inter_enc else 'TOZA'} "
-                               f"(toza={d_clear:.2f} deshifr={d_dec:.2f}, {n} namuna)")
+            self._decide_inter()
+
+    def _decide_inter(self) -> None:
+        """Namunalardan qaror chiqaradi (va keshga yozadi)."""
+        n = len(self._inter_clear)
+        d_clear = len(set(self._inter_clear)) / n
+        d_dec = len(set(self._inter_dec)) / n
+        # Teng bo'lsa TOZA qoldiramiz (xavfsizroq: toza P-freymni deshifrlash
+        # uni buzadi), faqat aniq farq bo'lsa deshifrga o'tamiz.
+        fresh = d_dec + _INTER_MARGIN < d_clear
+        if self._verifying:
+            # Kesh ishlatildi (buferlash o'tkazib yuborilgan). Endi tekshiramiz:
+            # to'g'ri bo'lsa jimgina davom etamiz, xato bo'lsa TUZATAMIZ — bunda
+            # boshidagi bir necha P-freym buzuq ketgan bo'ladi (~0.5s), keyin
+            # toza. Kelishuv: har ochilishda ~0.7s tejash o'rniga kameraning
+            # xatti-harakati O'ZGARGAN kamdan-kam holatda qisqa g'alizlik.
+            self._verifying = False
+            if fresh != self._inter_enc:
+                self._inter_enc = fresh
+                self.inter_note = (f"kesh XATO edi -> tuzatildi: "
+                                   f"inter={'SHIFRLI' if fresh else 'TOZA'} "
+                                   f"(toza={d_clear:.2f} deshifr={d_dec:.2f})")
+                if self._cache_key:
+                    _enc_cache_store(self._cache_key, fresh)
+            return
+        self._inter_enc = fresh
+        self.inter_note = (f"inter={'SHIFRLI' if self._inter_enc else 'TOZA'} "
+                           f"(toza={d_clear:.2f} deshifr={d_dec:.2f}, {n} namuna)")
+        if self._cache_key:
+            _enc_cache_store(self._cache_key, self._inter_enc)
 
     def _emit_nal(self, out, nal) -> None:
         if self._decrypt is None:
@@ -279,9 +391,17 @@ class _NalDecryptBase:
         if self._pending is not None and not (self._decrypt and self._clear and not self._drop):
             self._pending = None
         if not self._decrypt:                       # toza oqim
+            # Darvoza toza oqimda ham kerak — oqim baribir GOP o'rtasidan
+            # boshlanadi ([[_irap_gate]]).
+            h = self._clear or 2
+            nt = (nal[0] & 0x1F) if h == 1 else ((nal[0] >> 1) & 0x3F)
+            if not self._irap_gate(nt, h):
+                return
             self._put(out, START + bytes(nal))
             return
         if self._drop:
+            # DIQQAT: B-hint va B-whole da NAL header SHIFRLANGAN, ya'ni turini
+            # oldindan o'qib bo'lmaydi -> IRAP darvozasi bu yerda QO'LLANMAYDI.
             # B-hint + SELEKTIV shifr (har NAL alohida). I-freym/param-set NAL larida
             # toza tur-ko'rsatkich (dublikat header) bor: shifrli bo'lsa AES deshifr header'ga
             # mos keladi; juda qisqa (PPS) bo'lsa AESsiz dublikat header. P-freym ko'rsatkichsiz.
@@ -306,6 +426,14 @@ class _NalDecryptBase:
         # ([[_sample_inter]]). Qaror chiqquncha chiqish navbatda ushlanadi.
         ntype = (nal[0] & 0x1F) if hdr == 1 else ((nal[0] >> 1) & 0x3F)
         enc = self._H264_ENC_TYPES if hdr == 1 else self._HEVC_ENC_TYPES
+        # NAMUNA darvozadan QAT'IY NAZAR olinadi — shunda qaror IRAP kutish
+        # paytida tayyor bo'ladi va darvoza ochilgach qo'shimcha kechikish yo'q.
+        if ntype not in enc and (self._inter_enc is None or self._verifying):
+            self._sample_inter(nal, hdr)
+        if self._inter_enc is not None and self._pending is not None:
+            self._flush(out)          # qaror yetib keldi — navbatni bo'shatamiz
+        if not self._irap_gate(ntype, hdr):
+            return
         if ntype in enc:
             self._put(out, START + bytes(nal[:hdr]) + self._decrypt_body(nal[hdr:]))
         else:
@@ -321,8 +449,8 @@ class _NalDecryptBase:
 class HevcRtpDecryptor(_NalDecryptBase):
     """RTP/HEVC paketlarini Annex-B ga aylantirib, NAL body ni dekodlaydi."""
 
-    def __init__(self, key: str):
-        super().__init__(key)
+    def __init__(self, key: str, *, cache_key: str | None = None):
+        super().__init__(key, cache_key=cache_key)
         self._cur = None       # joriy FU (fragment) yig'indisi
 
     def feed(self, rtp_packet: bytes) -> bytes:
@@ -364,8 +492,8 @@ class H264RtpDecryptor(_NalDecryptBase):
     """RTP/H.264 paketlarini Annex-B ga aylantirib, NAL body ni dekodlaydi.
     H.264 NAL header 1 bayt; FU-A=28, STAP-A=24, yagona NAL=1..23."""
 
-    def __init__(self, key: str):
-        super().__init__(key)
+    def __init__(self, key: str, *, cache_key: str | None = None):
+        super().__init__(key, cache_key=cache_key)
         self._cur = None
 
     def _emit(self, out: bytearray, nal):  # override: 1 baytli NAL header, SPS=tur 7
@@ -433,12 +561,13 @@ class PsStreamDecryptor(_NalDecryptBase):
 
     _PROFILES = {66, 77, 88, 100, 110, 122, 244, 44, 83, 86, 118, 128}
 
-    def __init__(self, key: str):
-        super().__init__(key)
+    def __init__(self, key: str, *, cache_key: str | None = None):
+        super().__init__(key, cache_key=cache_key)
         self._buf = bytearray()   # demux qilinmagan PS qoldig'i
         self._es = bytearray()    # ajratilgan ES (NAL ga ajratilmagan qoldiq)
         self._enc_off = None      # shifr boshlanish offseti: 0=butun NAL, 1=H.264, 2=HEVC header'dan keyin
         self._pending = []        # aniqlanmaguncha NAL larni vaqtincha saqlaymiz
+        self.buf_resyncs = 0      # bufer chegarasidan oshib resync qilingan marta
 
     def _emit(self, out: bytearray, nal) -> None:  # override: codec/variant-aware
         if not nal:
@@ -584,10 +713,25 @@ class PsStreamDecryptor(_NalDecryptBase):
         self._es = e[starts[-1]:]  # oxirgi to'liqsiz NAL qoladi
         return bytes(out)
 
+    def _cap(self) -> None:
+        """Buferlar chegaradan oshsa — oxirgi start-kodga RESYNC qilamiz.
+
+        Normal oqimda buferlar har `feed` da bo'shaydi. Lekin start-kodsiz yoki
+        buzuq kirishda `_demux` hech nimani ajrata olmaydi va `_buf`/`_es`
+        cheksiz o'sardi — uzoq ishlaydigan jarayonda bu xotira oqishi."""
+        for name in ("_buf", "_es"):
+            b = getattr(self, name)
+            if len(b) > _MAX_PS_BUF:
+                i = b.rfind(b"\x00\x00\x01")
+                setattr(self, name, b[i:] if i > 0 else bytearray())
+                self.buf_resyncs += 1
+
     def feed(self, ps_chunk: bytes) -> bytes:
         self._buf += ps_chunk
         self._demux()
-        return self._process_es()
+        out = self._process_es()
+        self._cap()
+        return out
 
 
 class PacedWriter:
@@ -892,6 +1036,8 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
     mode = stream_mode or ("sub" if substream else "main")
     if mode not in ("main", "sub", "auto"):
         mode = "main"
+    # Inter-shifr qarori shu KAMERA bo'yicha keshlanadi ([[_enc_cache_load]]).
+    ck = f"{serial}-{channel}"
 
     def _flag_keyerror():
         try:
@@ -1018,13 +1164,13 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                         keyerr = lambda: False
                         annexb = False
                     elif not is_rtp:
-                        dec = PsStreamDecryptor(key)          # MPEG-PS (H.264/HEVC avto)
+                        dec = PsStreamDecryptor(key, cache_key=ck)  # MPEG-PS (H.264/HEVC avto)
                         transform = dec.feed; keyerr = lambda: dec.key_error
                     elif codec == "h264":
-                        dec = H264RtpDecryptor(key)           # RTP/H.264
+                        dec = H264RtpDecryptor(key, cache_key=ck)   # RTP/H.264
                         transform = dec.feed; keyerr = lambda: dec.key_error
                     else:
-                        dec = HevcRtpDecryptor(key)           # RTP/HEVC
+                        dec = HevcRtpDecryptor(key, cache_key=ck)   # RTP/HEVC
                         transform = dec.feed; keyerr = lambda: dec.key_error
 
                     self.send_response(200)

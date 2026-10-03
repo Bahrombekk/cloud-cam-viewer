@@ -143,6 +143,7 @@ class CloudCam:
         self._logged_in = False
         self.auth_mode: Optional[str] = None   # "resumed" | "refreshed" | "login"
         self._key_fetch_blocked = False        # 2FA ko'tarilmagan -> avto-olishni to'xtatamiz
+        self._isup = None                      # kech yaratiladi ([[isup]])
 
     # ── hisob ────────────────────────────────────────────────────────
     def login(self, *, force: bool = False) -> "CloudCam":
@@ -228,7 +229,48 @@ class CloudCam:
                            width=width, height=height, key=key)
         return Stream(cs)
 
+    # ── ISUP 5.0 ([[cloudcam.isup]]) ─────────────────────────────────
+    @property
+    def isup(self):
+        """`isup-bridge` klienti (birinchi murojaatda yaratiladi).
+
+        Bulut hisobi SHART EMAS — ISUP qurilmalari bulutdan mustaqil."""
+        if self._isup is None:
+            from . import isup as _isup
+            self._isup = _isup.from_settings(self.settings)
+        return self._isup
+
+    def isup_cameras(self) -> list[Camera]:
+        """Ko'prikka ulangan ISUP qurilmalarining kanallari."""
+        out = []
+        for dev in self.isup.devices():
+            for ch in dev.channels:
+                name = f"{dev.id} ch{ch}" + (f" ({dev.ip})" if dev.ip else "")
+                out.append(Camera(dev.id, ch, name))
+        return out
+
+    def open_isup(self, device_id: str, channel: int = 1, *, sub: bool = False,
+                  width: Optional[int] = None, height: Optional[int] = None,
+                  want: bool = True) -> Stream:
+        """ISUP kamerasini ochadi (bulutsiz, deshifrsiz).
+
+        `want=True` — ko'prikdan shu oqimni ochishni so'raydi. Asosiy oqim
+        ~4 Mbit/s, substream ~0.3 Mbit/s, shuning uchun ko'prik oqimni faqat
+        so'ralganda ochadi ([[IsupBridge.want]]); ISUP'da bu ~0.23 s.
+        """
+        if want:
+            self.isup.want((device_id, channel, sub))
+        url = self.isup.stream_url(device_id, channel, sub=sub)
+        cs = self._mgr.add(device_id, channel=channel, decrypt=False,
+                           width=width, height=height, url=url)
+        return Stream(cs)
+
     def close(self) -> None:
+        if self._isup is not None:
+            try:
+                self._isup.want(replace=True)   # ko'prik oqimlarni yopsin
+            except Exception:
+                pass                            # yopilishda xato ish to'xtatmasin
         self._mgr.stop_all()
 
     # kontekst-menejer: `with CloudCam(...) as cam:`
