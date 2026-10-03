@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Iterator, Optional
 
-from .client import CloudClient
+from .sources.cloud import CloudClient
 from .settings import Settings, set_active
 from .stream_manager import StreamManager, load_cam_keys
 
@@ -176,7 +176,7 @@ class CloudCam:
         `serials=None` -> hisobdagi hamma qurilma. Natija [[keys.FetchResult]];
         `needs_mfa` bo'lsa `send_key_2fa()` chaqirib, emaildagi kodni
         `mfa_code` bilan qayta chaqiring."""
-        from . import keys as _keys
+        from .sources.cloud import keys as _keys
         if serials is None:
             serials = sorted({c.serial for c in self.cameras()})
         res = _keys.fetch(self.client, serials, mfa_code=mfa_code,
@@ -196,9 +196,9 @@ class CloudCam:
     # ── kameralar ────────────────────────────────────────────────────
     def cameras(self) -> list[Camera]:
         """Kamera ulangan kanallar ro'yxati (bo'sh NVR slotlari emas)."""
-        from . import decrypt_proxy
+        from .sources.cloud import devices as _devices
         return [Camera(serial, ch, name)
-                for serial, ch, name in decrypt_proxy.list_cameras(self.client)]
+                for serial, ch, name in _devices.list_cameras(self.client)]
 
     def open(self, serial: str, channel: int = 1, *, decrypt: bool = True,
              key: Optional[str] = None, width: Optional[int] = None,
@@ -229,14 +229,14 @@ class CloudCam:
                            width=width, height=height, key=key)
         return Stream(cs)
 
-    # ── ISUP 5.0 ([[cloudcam.isup]]) ─────────────────────────────────
+    # ── ISUP 5.0 ([[cloudcam.sources.isup]]) ─────────────────────────────────
     @property
     def isup(self):
         """`isup-bridge` klienti (birinchi murojaatda yaratiladi).
 
         Bulut hisobi SHART EMAS — ISUP qurilmalari bulutdan mustaqil."""
         if self._isup is None:
-            from . import isup as _isup
+            from .sources import isup as _isup
             self._isup = _isup.from_settings(self.settings)
         return self._isup
 

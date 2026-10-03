@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudcam"
-version = "0.2.0"
+version = "0.3.0"
 description = "EZVIZ / Hik-Connect bulut kameralariga kirish va shifrlangan oqimlarni deshifrlash (H.264/H.265, RTP + MPEG-PS)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -18,7 +18,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pyezvizapi",
+    # Ichki funksiyalari almashtiriladi ([[sources.cloud.compat]]) — oraliq pin.
+    "pyezvizapi>=1.0.5,<1.1",
     "numpy",
     "requests",
     "pycryptodome",
@@ -37,8 +38,8 @@ Source = "https://github.com/Bahrombekk/cloud-cam-viewer"
 # `pip install` dan keyin buyruq sifatida ishlatiladi.
 cloudcam = "cloudcam.cli:main"
 
-[tool.setuptools]
-packages = ["cloudcam"]
+[tool.setuptools.packages.find]
+include = ["cloudcam*"]
 
 [tool.ruff]
 line-length = 100

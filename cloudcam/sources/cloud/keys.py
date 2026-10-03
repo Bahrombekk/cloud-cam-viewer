@@ -18,7 +18,7 @@ import os
 from dataclasses import dataclass, field
 
 from .client import MfaRequired
-from .settings import get_active
+from ...settings import get_active
 
 
 def _path(path: str | None = None) -> str:

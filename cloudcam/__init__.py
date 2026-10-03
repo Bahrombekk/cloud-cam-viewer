@@ -11,11 +11,11 @@ Yuqori darajali API (tavsiya etiladi):
 Quyi darajali qismlar ham ochiq: CloudClient, StreamManager.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .api import Camera, CloudCam, Stream
-from .client import CloudClient, MfaRequired
-from .isup import IsupBridge, IsupDevice, IsupError, IsupUnavailable
+from .sources.cloud import CloudClient, MfaRequired
+from .sources.isup import IsupBridge, IsupDevice, IsupError, IsupUnavailable
 from .settings import Settings
 from .stream_manager import StreamManager, load_cam_keys
 

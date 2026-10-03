@@ -18,8 +18,10 @@ import json
 import pytest
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy as dp
-from cloudcam.decrypt_proxy import START, HevcRtpDecryptor, PsStreamDecryptor
+from cloudcam.codec import nal as dp
+from cloudcam.codec.nal import START
+from cloudcam.codec.ps import PsStreamDecryptor
+from cloudcam.codec.rtp import HevcRtpDecryptor
 from cloudcam.settings import Settings, set_active
 
 KEY = "VERIFYCODE1"

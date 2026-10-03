@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from cloudcam import keys
-from cloudcam.client import MfaRequired
+from cloudcam.sources.cloud import keys
+from cloudcam.sources.cloud.client import MfaRequired
 from cloudcam.settings import Settings, set_active
 
 

@@ -92,7 +92,7 @@ def cmd_keys(args) -> int:
 
 def cmd_isup(args) -> int:
     """ISUP ko'prigi: qurilmalar, kalitlar, holat. Bulut hisobi kerak emas."""
-    from .isup import IsupError, from_settings
+    from .sources.isup import IsupError, from_settings
     from .settings import Settings
 
     bridge = from_settings(Settings.resolve())

@@ -13,7 +13,7 @@ import time
 
 import cv2
 
-from cloudcam.client import CloudClient
+from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.stream_manager import StreamManager, load_cam_keys
 import config
 

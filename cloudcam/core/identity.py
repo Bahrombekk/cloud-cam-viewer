@@ -43,7 +43,7 @@ def _from_mac() -> str:
 
 def _store_path() -> str:
     """Kod saqlanadigan fayl — token fayli yonida (u ham shu o'rnatmaga tegishli)."""
-    from .settings import get_active
+    from ..settings import get_active
     tok = get_active().token_file or "token.json"
     d = os.path.dirname(os.path.abspath(tok))
     return os.path.join(d, _FILENAME)

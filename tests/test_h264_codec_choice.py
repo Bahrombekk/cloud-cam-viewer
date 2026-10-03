@@ -10,9 +10,8 @@ from pathlib import Path
 
 from Crypto.Cipher import AES
 
-from cloudcam.decrypt_proxy import (
-    START, H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec,
-)
+from cloudcam.codec.nal import START
+from cloudcam.codec.rtp import H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "VERIFYCODE1"
@@ -80,10 +79,28 @@ def test_encrypted_property_is_public():
     assert dec.encrypted is False
 
 
-def test_check_code_script_picks_the_codec():
-    """`check_code.py` ni import qilib bo'lmaydi (u `config` ni talab qiladi),
-    shuning uchun manba matni qo'riqlanadi."""
-    text = (ROOT / "check_code.py").read_text(encoding="utf-8")
-    assert "detect_rtp_codec" in text, "codec aniqlanmayapti"
-    assert "H264RtpDecryptor" in text, "H.264 dekodlovchi ishlatilmayapti"
-    assert "._decrypt" not in text, "ichki atribut o'qilmoqda — `encrypted` ishlating"
+def test_the_verifier_picks_the_codec():
+    """Kodni tekshirish mantig'i codec'ni ANIQLASHI kerak.
+
+    Ilgari bu `check_code.py` skriptida edi va import qilib bo'lmasdi (u
+    `config` ni talab qilardi), shuning uchun manba matni qo'riqlanardi. Endi
+    u kutubxona moduli — to'g'ridan-to'g'ri tekshiramiz."""
+    import inspect
+
+    from cloudcam.sources.cloud import verify
+
+    src = inspect.getsource(verify.check_code)
+    assert "detect_rtp_codec" in src, "codec aniqlanmayapti"
+    assert "H264RtpDecryptor" in src, "H.264 dekodlovchi ishlatilmayapti"
+    assert "._decrypt" not in src, "ichki atribut o'qilmoqda — `encrypted` ishlating"
+
+
+def test_the_verifier_reports_every_outcome():
+    """Chaqiruvchi beshta holatni ajrata olishi kerak."""
+    import inspect
+
+    from cloudcam.sources.cloud import verify
+
+    src = inspect.getsource(verify.check_code)
+    for outcome in ("correct", "wrong", "clear", "timeout", "nostream"):
+        assert f'"{outcome}"' in src, f"{outcome} holati yo'q"

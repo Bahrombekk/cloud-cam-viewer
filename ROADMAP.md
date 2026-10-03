@@ -46,13 +46,16 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
 
 ## A. Upstream bog'liqlik (P0 — yangi, eng yuqori)
 
-- [ ] **`pyezvizapi` versiyasi pinlanmagan** — `pyproject.toml` `dependencies`
+- [x] **`pyezvizapi` versiyasi pinlandi** — `pyezvizapi>=1.0.5,<1.1`
   - Hozir shunchaki `"pyezvizapi"`. Bu **reverse-engineering kutubxonasi**, ya'ni tez-tez
     o'zgaradi. Yangi o'rnatma istalgan versiyani tortadi.
   - Qanday: `pyezvizapi>=1.0.5,<1.1` kabi oraliq; `requirements.txt` da aniq versiya
     (hozir sinalgani — `1.0.5.0`).
 
-- [ ] **5 ta monkeypatch nuqtasi tekshirilmaydi** — `decrypt_proxy.py:86`, `:786`,
+- [x] **Monkeypatch nuqtalari TEKSHIRILADI** — `compat.check_upstream()` import
+  vaqtida 6 ta nomni tekshiradi va yo'q bo'lsa `IncompatibleUpstream` beradi
+  (`AttributeError` yoki jim nosozlik emas). Eski tavsif:
+- [ ] ~~5 ta monkeypatch nuqtasi tekshirilmaydi~~ — `decrypt_proxy.py:86`, `:786`,
   `vtm_cache.py:154-187`
   - Loyiha quyidagilarni almashtiradi yoki import qiladi:
     `_cs.get_vtm_page_list`, `_cs.get_vtdu_token_v2`, `_cs.build_vtm_url`,
@@ -73,7 +76,10 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
     kirishdan farq qilsinmi) va farq qilmasa `WARNING` bersin. Qo'shimcha: upstream'ning
     haqiqiy `build_vtm_url` chiqishiga qarshi bitta test (pyezvizapi o'rnatilgan bo'lsa).
 
-- [ ] **Import vaqtidagi yon ta'sirlar** — `decrypt_proxy.py:86-87`
+- [x] **Import vaqtidagi yon ta'sirlar olib tashlandi** — patchlar endi
+  `install_patches()` da, modulni import qilish `pyezvizapi` ni o'zgartirmaydi.
+  Eski tavsif:
+- [ ] ~~Import vaqtidagi yon ta'sirlar~~
   - Modulni import qilishning o'zi upstream'ni global almashtiradi va
     `vtm_cache.install()` ni chaqiradi. Boshqa kod `pyezvizapi` ni to'g'ridan-to'g'ri
     ishlatsa, u bilmagan holda bizning patch'imizni oladi. Testlar ham import tartibiga
@@ -251,17 +257,18 @@ Birinchi kadrgacha vaqtni haqiqatan quyidagilar belgilaydi:
 
 ---
 
-## 7. decrypt_proxy.py — bosqichma-bosqich refactor (P1)
+## 7. decrypt_proxy.py — refactor (BAJARILDI)
 
-Fayl ~1080 satr va 6 ta mas'uliyatni birlashtiradi. Ishlaydigan faylni birdan bo'lmaslik;
-testlar bilan ajratish:
+Fayl 1231 satr va 6 ta mas'uliyatni birlashtirardi. Mavjud 106 ta test himoya to'ri
+bo'ldi: kod QAYTA YOZILMADI, faqat ko'chirildi — shuning uchun hech bir test
+o'zgarishi shart bo'lmadi (faqat import yo'llari).
 
-- [ ] `protocol/rtp.py` — RTP parsing, FU/AP yig'ish
-- [ ] `protocol/mpeg_ps.py`, `protocol/mpeg_ts.py`
-- [ ] `codec/h264.py`, `codec/hevc.py` — NAL turlari, param-set markerlari
-- [ ] `crypto/aes.py`, `crypto/detector.py` — AES + shifr varianti + inter detektori
-- [ ] `stream/jitter.py` (PacedWriter), `stream/proxy.py` (HTTP + orkestratsiya)
-- [ ] `compat.py` — upstream patch'lari bir joyda (§A)
+- [x] `codec/rtp.py` — RTP parsing, FU/AP yig'ish
+- [x] `codec/ps.py`
+- [x] `codec/nal.py` — NAL turlari, variantlar, IRAP darvozasi
+- [x] `codec/enc_cache.py` — inter qarorining keshi
+- [x] `media/paced.py` (PacedWriter), `sources/cloud/proxy.py` (HTTP + orkestratsiya)
+- [x] `sources/cloud/compat.py` — upstream patch'lari + VERSIYA TEKSHIRUVI (§A)
 - *Maqsad:* har qatlamni mustaqil test qilish; protokol o'zgarishlari boshqa kodga kam ta'sir
   qilsin.
 

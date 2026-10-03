@@ -12,8 +12,8 @@ import time
 
 import pytest
 
-from cloudcam import identity
-from cloudcam.client import CloudClient
+from cloudcam.core import identity
+from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.settings import Settings, set_active
 
 

@@ -18,7 +18,7 @@ import urllib.request
 
 import pytest
 
-from cloudcam import decrypt_proxy, vtm_cache
+from cloudcam.sources.cloud import proxy as decrypt_proxy, vtm_cache
 
 
 def _free_port() -> int:
@@ -89,7 +89,7 @@ def proxy(monkeypatch):
         return srv
 
     monkeypatch.setattr(decrypt_proxy, "ThreadingHTTPServer", _capture)
-    monkeypatch.setattr(decrypt_proxy, "_make_client", lambda: object())
+    monkeypatch.setattr(decrypt_proxy, "make_client", lambda: object())
     monkeypatch.setattr(vtm_cache, "channel_missing", lambda *a, **k: False)
 
     def _run(mode, opener):

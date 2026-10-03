@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from cloudcam import identity
+from cloudcam.core import identity
 from cloudcam.settings import Settings, set_active
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +34,7 @@ def test_hardcoded_shared_code_is_gone_from_the_source():
 
     `identity.py` — yagona istisno: u yerda kod faqat IZOHDA, nega tashlab
     yuborilgani tushuntirilgan."""
-    allowed = {"cloudcam/identity.py", f"tests/{Path(__file__).name}"}
+    allowed = {"cloudcam/core/identity.py", f"tests/{Path(__file__).name}"}
     offenders = [p.relative_to(ROOT).as_posix()
                  for p in ROOT.rglob("*.py")
                  if "venv" not in p.parts
@@ -81,6 +81,6 @@ def test_env_overrides_everything(monkeypatch, tmp_path):
 def test_client_and_proxy_use_the_same_code():
     """Klient va proxy bir xil terminal bo'lib ko'rinishi shart — aks holda
     bulut ularni ikki qurilma deb hisoblaydi."""
-    from cloudcam.client import CloudClient
+    from cloudcam.sources.cloud.client import CloudClient
     c = CloudClient("a@b.c", "pw")
     assert c.session.headers["featureCode"] == identity.feature_code()

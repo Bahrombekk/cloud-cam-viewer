@@ -187,30 +187,43 @@ For an NVR, the verification code is per-device and applies to all its channels.
 
 ```
 cloud-cam-viewer/
-├── cloudcam/                # core library (package)
-│   ├── api.py               # high-level facade: CloudCam / Stream / Camera
-│   ├── cli.py               # `cloudcam` command (cameras, keys, snapshot, view)
-│   ├── client.py            # cloud login, session reuse, verification-code fetch
-│   ├── identity.py          # per-install terminal id (featureCode)
-│   ├── isup.py              # ISUP 5.0 bridge client (cloud-free cameras)
-│   ├── keys.py              # verification-code store + cloud fetch (2FA flow)
+├── cloudcam/
+│   ├── api.py               # facade: CloudCam / Stream / Camera
+│   ├── cli.py               # `cloudcam` command
 │   ├── settings.py          # Settings: config.py / CLOUDCAM_* env / defaults
 │   ├── stream_manager.py    # per-camera processes, reconnect, watchdog, GPU
-│   ├── vtm_cache.py         # account-level metadata cache + channel gate
-│   ├── viewer.py            # OpenCV grid viewer (optional `viewer` extra)
-│   └── decrypt_proxy.py     # RTP/HEVC + MPEG-PS depacketize, AES decrypt, paced output
+│   ├── viewer.py            # OpenCV grid (optional `viewer` extra)
+│   ├── core/                # depends on nothing but settings
+│   │   ├── identity.py      #   per-install terminal id (featureCode)
+│   │   └── ipc.py           #   child → parent events
+│   ├── codec/               # pure: no cloud, no sockets
+│   │   ├── nal.py           #   encryption variants, IRAP gate, inter decision
+│   │   ├── rtp.py           #   HEVC / H.264 depacketising
+│   │   ├── ps.py            #   MPEG-PS demux
+│   │   └── enc_cache.py     #   remembered per-camera decision
+│   ├── media/
+│   │   └── paced.py         #   jitter buffer (PacedWriter)
+│   └── sources/             # the two ways to reach a camera
+│       ├── cloud/           #   Hik-Connect / EZVIZ
+│       │   ├── compat.py    #     pyezvizapi patches + version guard
+│       │   ├── client.py    #     login, session reuse, verification codes
+│       │   ├── keys.py      #     code store + cloud fetch (2FA flow)
+│       │   ├── devices.py   #     camera/channel listing
+│       │   ├── verify.py    #     is this code correct?
+│       │   ├── vtm_cache.py #     account-level metadata cache
+│       │   └── proxy.py     #     decrypt proxy (separate process)
+│       └── isup.py          #   ISUP 5.0 bridge client
 ├── tests/                   # pytest (cloud is stubbed — no account needed)
-├── app.py                   # main multi-camera viewer (grid / fullscreen)
-├── single.py                # single-camera viewer
-├── set_code.py              # save a verification code
-├── check_code.py            # verify a verification code
-├── config.example.py        # settings template (copy to config.py)
-├── cam_keys.example.json    # verification-code file format
-├── requirements.txt
-├── README.md  ·  LICENSE  ·  .gitignore
+├── app.py · single.py       # viewers
+├── set_code.py · check_code.py
+├── config.example.py · cam_keys.example.json
+└── README.md · ROADMAP.md · LICENSE
 ```
 
-> Run all scripts from the project root (`python app.py`, `python check_code.py ...`).
+Dependencies only ever point **down** that list — `codec/` cannot import the
+cloud, which is why the decryption logic is testable without an account.
+`tests/test_layout.py` enforces it.
+
 
 ## ISUP 5.0 — cameras that dial out to you
 

@@ -7,7 +7,7 @@ darajali API'ning kamera ro'yxati umuman ishlamasdi.
 """
 import pytest
 
-from cloudcam import decrypt_proxy as dp
+from cloudcam.sources.cloud import devices as dp
 
 
 class FakeCloudClient:
@@ -30,7 +30,7 @@ def spy(monkeypatch):
         made["n"] += 1
         return FakeEzvizClient()
 
-    monkeypatch.setattr(dp, "_make_client", _made_client)
+    monkeypatch.setattr(dp, "make_client", _made_client)
     monkeypatch.setattr(dp, "_device_names", lambda c: used.setdefault("client", c) or {})
     monkeypatch.setattr(dp._cs, "get_vtm_page_list", lambda c: {"resourceInfos": []})
     return used, made

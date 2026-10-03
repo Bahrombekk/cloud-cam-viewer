@@ -10,7 +10,8 @@ from pathlib import Path
 import pyezvizapi.cloud_stream as _cs
 import pytest
 
-from cloudcam import decrypt_proxy
+from cloudcam.sources.cloud import compat as decrypt_proxy
+from cloudcam.sources.cloud import proxy as _proxy
 
 MGR = Path(__file__).resolve().parents[1] / "cloudcam" / "stream_manager.py"
 
@@ -63,9 +64,9 @@ def test_auto_mode_tries_substream_first_then_main():
     Hamma kamerada substream yo'q (batareyali modellar, ba'zi NVR kanallari):
     qattiq `sub` bunday kamerada qora ekran, qattiq `main` esa grid'da
     bekorga 1440p. Tartib va probe muddati shu yerda qo'riqlanadi."""
-    src = (Path(__file__).resolve().parents[1] / "cloudcam" / "decrypt_proxy.py"
+    src = (Path(__file__).resolve().parents[1] / "cloudcam" / "sources" / "cloud" / "proxy.py"
            ).read_text(encoding="utf-8")
     m = re.search(r'attempts\s*=\s*\[\("sub",\s*STREAM_PROBE_TIMEOUT\),\s*\("main"', src)
     assert m, "auto rejimda substream BIRINCHI sinalishi kerak"
-    assert decrypt_proxy.STREAM_PROBE_TIMEOUT <= 10.0, \
+    assert _proxy.STREAM_PROBE_TIMEOUT <= 10.0, \
         "probe uzoq bo'lsa substreamsiz kamera sekin ochiladi"

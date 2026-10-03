@@ -24,7 +24,7 @@ import tempfile
 import time
 from typing import Any
 
-from .settings import get_active
+from ...settings import get_active
 
 TTL_SECONDS = 3600.0            # kesh amal qilish muddati
 _ENV_TTL = "CLOUDCAM_VTM_TTL"
@@ -38,10 +38,8 @@ def _ttl() -> float:
 
 
 def cache_dir() -> str:
-    """Kesh fayllari joyi — token fayli yonida (u ham hisobga tegishli)."""
-    tok = get_active().token_file or "token.json"
-    d = os.path.dirname(os.path.abspath(tok))
-    return d or tempfile.gettempdir()
+    """Kesh fayllari joyi — [[Settings.cache_dir]] bilan BIR XIL."""
+    return get_active().cache_dir()
 
 
 def account_key(token_file: str | None = None) -> str:

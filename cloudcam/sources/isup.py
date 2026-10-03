@@ -257,7 +257,7 @@ class IsupBridge:
 
 def from_settings(settings=None) -> IsupBridge:
     """Sozlamadagi manzil/token bilan ko'prik klienti."""
-    from .settings import get_active
+    from ..settings import get_active
     s = settings or get_active()
     return IsupBridge(s.isup_url, token=s.isup_token or None,
                       rtsp_base=s.isup_rtsp_base)

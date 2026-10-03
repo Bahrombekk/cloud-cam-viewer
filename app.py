@@ -23,9 +23,9 @@ import time
 import cv2
 import numpy as np
 
-from cloudcam.client import CloudClient
+from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.stream_manager import StreamManager, load_cam_keys
-from cloudcam import decrypt_proxy
+from cloudcam.sources.cloud import devices
 import config
 
 
@@ -114,7 +114,7 @@ def main():
 
     # Faqat haqiqiy kamera ulangan kanallarni ko'rsatamiz (bo'sh NVR slotlari emas)
     print("📡 Kameralar aniqlanmoqda...")
-    cams = decrypt_proxy.list_cameras()
+    cams = devices.list_cameras()
     chosen = choose_cameras(cams)
     if not chosen:
         print("❌ Hech qaysi kamera tanlanmadi")
@@ -134,7 +134,7 @@ def main():
 
     labels, streams = [], []
     for serial, ch, name in chosen:
-        # Hik-Connect kameralari hammasi RTP/HEVC yoki MPEG-PS -> har doim decrypt_proxy.
+        # Hik-Connect kameralari hammasi RTP/HEVC yoki MPEG-PS -> har doim dekodlovchi proxy.
         # Kod bo'lmasa "AUTO": toza oqim avtomatik o'tadi; shifrli bo'lsa XATO beradi.
         key = cam_keys.get(serial) or "AUTO"
         st = manager.add(serial, channel=ch, decrypt=True, key=key)

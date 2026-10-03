@@ -55,7 +55,7 @@ class Settings:
     substream: bool = False
     # Qaysi oqim so'ralsin: "main" | "sub" | "auto".
     # "auto" — avval substream so'raladi, u kelmasa asosiyga qaytiladi
-    # ([[decrypt_proxy.serve]]). Hamma kamerada ham substream yo'q (masalan
+    # ([[sources.cloud.proxy.serve]]). Hamma kamerada ham substream yo'q (masalan
     # batareyali modellar), shuning uchun qattiq "sub" xavfli.
     stream_mode: str = "main"
     token_file: str = "token.json"
@@ -126,6 +126,16 @@ class Settings:
         """Standart yechim: config.py (bo'lsa) -> muhit o'zgaruvchilari."""
         return cls.from_env(cls.from_config_module())
 
+    def cache_dir(self) -> str:
+        """Kesh fayllari joyi — token fayli yonida (u ham hisobga tegishli).
+
+        `vtm_cache` ham, `codec.enc_cache` ham shuni ishlatadi: ilgari ikki
+        joyda mustaqil hisoblanardi va biri ikkinchisidan uzoqlashishi mumkin
+        edi."""
+        import tempfile
+        tok = self.token_file or "token.json"
+        return os.path.dirname(os.path.abspath(tok)) or tempfile.gettempdir()
+
     def replace(self, **kw) -> "Settings":
         data = {f.name: getattr(self, f.name) for f in fields(self)}
         data.update(kw)
@@ -133,7 +143,7 @@ class Settings:
 
 
 # ── modul darajasidagi faol sozlama ──────────────────────────────────
-# stream_manager va decrypt_proxy shuni o'qiydi. Default — config.py'ni
+# stream_manager va bola-jarayonlar shuni o'qiydi. Default — config.py'ni
 # (bo'lsa) va muhit o'zgaruvchilarini avtomatik yechadi, ya'ni eski
 # `import config` xatti-harakati saqlanadi.
 _active: Settings | None = None

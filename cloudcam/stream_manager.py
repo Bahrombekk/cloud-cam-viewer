@@ -14,16 +14,16 @@ import threading
 import socket
 import time
 import os
-import tempfile
 
 import numpy as np
 
+from .core import ipc
 from .settings import get_active
 
 
 def load_cam_keys(path=None):
     """Saqlangan tasdiqlash kodlari ([[keys.load]] ustidagi eski nom)."""
-    from . import keys as _keys
+    from .sources.cloud import keys as _keys
     return _keys.load(path)
 
 
@@ -45,7 +45,7 @@ class CameraStream:
         self.key = key  # shifrlangan kamera "Tasdiqlash Kodu" (verification code)
         # TASHQI manba (masalan ISUP ko'prigi bergan RTSP). Berilgan bo'lsa
         # lokal dekodlovchi proxy ishga tushmaydi — oqim allaqachon toza
-        # ([[cloudcam.isup]]), ffmpeg uni to'g'ridan-to'g'ri o'qiydi.
+        # ([[cloudcam.sources.isup]]), ffmpeg uni to'g'ridan-to'g'ri o'qiydi.
         self.url = url
         _s = get_active()
         self.width = width or _s.display_width
@@ -82,14 +82,6 @@ class CameraStream:
                 time.sleep(0.3)
         return False
 
-    def _keyerr_path(self):
-        return os.path.join(tempfile.gettempdir(),
-                            f"ezviz_keyerr_{self.serial}_{self.channel}.flag")
-
-    def _offline_path(self):
-        return os.path.join(tempfile.gettempdir(),
-                            f"ezviz_offline_{self.serial}_{self.channel}.flag")
-
     def _project_root(self):
         # cloudcam/ ning ota-papkasi = loyiha ildizi
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -103,11 +95,7 @@ class CameraStream:
         if self.proxy_proc:
             self.proxy_proc.terminate()
         # eski bayroqlarni tozalaymiz (yangi urinish)
-        for p in (self._keyerr_path(), self._offline_path()):
-            try:
-                os.remove(p)
-            except OSError:
-                pass
+        ipc.clear_flags(self.serial, self.channel)
         python = self._python_exe()
         s = get_active()
         token_file = s.token_file
@@ -120,7 +108,7 @@ class CameraStream:
         if self.decrypt and self.key:
             # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan)
             cmd = [
-                python, "-m", "cloudcam.decrypt_proxy",
+                python, "-m", "cloudcam.sources.cloud.proxy",
                 self.serial, str(self.port), self.key, str(self.channel),
             ]
             # Grid uchun bulutdan KICHIK oqim so'raymiz ([[set_substream]]):
@@ -172,7 +160,7 @@ class CameraStream:
             "-analyzeduration", "200000",
             "-probesize", "200000",
         ]
-        # decrypt_proxy MPEG-TS chiqaradi (RTP/HEVC ham, MPEG-PS ham) -> avtomatik aniqlanadi
+        # proxy Annex-B chiqaradi (RTP/HEVC ham, MPEG-PS ham) -> avtomatik aniqlanadi
         cmd += [
             "-i", url,
             # passthrough — kadrlarni takrorlamaydi (faqat haqiqiy kadrlar -> kam CPU)
@@ -240,7 +228,7 @@ class CameraStream:
                         self._fps_time = now
 
                 # Shifr kodi xato bo'lsa — proxy bayroq qo'ygan bo'ladi
-                if os.path.exists(self._keyerr_path()):
+                if ipc.take_flag(ipc.KEY_ERROR, self.serial, self.channel):
                     # Kod umuman yo'q bo'lsa "AUTO" beriladi — bunda "kod xato"
                     # deyish chalg'itadi: foydalanuvchi mavjud bo'lmagan faylni
                     # tekshirishga tushadi. Nima qilish kerakligini aytamiz.
@@ -254,7 +242,7 @@ class CameraStream:
                 # Oflayn kamera qaytib kelguncha har 15s da urinish bulutga
                 # bekorga yuk (200 kameralik hisobda bu doimiy toshqin) —
                 # shuning uchun ketma-ket urinishlarda kutish UZAYADI.
-                if os.path.exists(self._offline_path()):
+                if ipc.take_flag(ipc.OFFLINE, self.serial, self.channel):
                     self._offline_tries += 1
                     wait = min(self.OFFLINE_BACKOFF_MAX,
                                15 * min(self._offline_tries, 4))
