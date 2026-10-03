@@ -125,14 +125,30 @@ def main():
         print("Foydalanish: python check_code.py <SERIAL> [KOD] [KANAL|all]")
         return
     serial = sys.argv[1]
-    code = sys.argv[2] if len(sys.argv) > 2 else "AUTO"
+    code = sys.argv[2].strip() if len(sys.argv) > 2 else "AUTO"
     ch_arg = sys.argv[3] if len(sys.argv) > 3 else "1"
     channels = [1, 2, 3, 4] if ch_arg == "all" else [int(ch_arg)]
 
     client = decrypt_proxy._make_client()
     for ch in channels:
         print(f"🔎 Tekshirilmoqda: {serial} ch{ch} (kod: {code}) ...")
-        report(serial, code, ch, check(client, serial, code, ch))
+        used, result = check_with_case_fallback(client, serial, code, ch)
+        report(serial, used, ch, result)
+
+
+def check_with_case_fallback(client, serial, code, channel=1):
+    """Kod AES kalit — registrga SEZGIR. Yorliqdagi kod katta harfli, lekin
+    foydalanuvchi kichik harf bilan yozishi mumkin; ilovada o'zgartirilgan kod
+    esa kichik harfli bo'lishi ham mumkin. Shuning uchun avval AYNAN berilgani,
+    xato bo'lsa katta harflisi sinaladi. Qaytaradi: (ishlatilgan_kod, natija)."""
+    result = check(client, serial, code, channel)
+    upper = code.upper()
+    if result == "wrong" and upper != code:
+        print(f"   ↻ katta harf bilan qayta: {upper}")
+        r2 = check(client, serial, upper, channel)
+        if r2 == "correct":
+            return upper, r2
+    return code, result
 
 
 if __name__ == "__main__":
