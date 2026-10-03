@@ -170,6 +170,10 @@ python check_code.py <SERIAL> <CODE> all    # all 4 NVR channels
 python set_code.py   <SERIAL> <CODE>        # save a code directly
 ```
 
+Codes are the AES key, so they are **case-sensitive** and stored exactly as
+typed. `check_code.py` tries the code as given and, if that is wrong, once more in
+upper case (label codes are upper case; a code changed in the app may not be).
+
 `check_code.py` tells you which case you are in:
 
 ```
@@ -303,7 +307,8 @@ cam.close()
 These are not knobs you need to tune — they are behaviours worth knowing about,
 each one measured against real cameras:
 
-- **Per-camera encryption auto-detection.** Some cameras encrypt only IRAP +
+- **Per-camera encryption auto-detection** — on both the RTP and the MPEG-PS
+  path. Some cameras encrypt only IRAP +
   parameter sets (inter P/B slices stay clear), others encrypt *everything*.
   Guessing wrong corrupts every P-frame — the picture recovers on each I-frame
   and breaks up in between. The decryptor decides from the stream itself using a
@@ -319,6 +324,15 @@ each one measured against real cameras:
 
   Two more cameras from the same account after the change: HEVC `BF1916346`
   181 frames / 0 errors, H.264 `BD7793665` 192 frames / 1 error.
+  Only real P/B slices are sampled: SEI/AUD bodies are not slice headers, and a
+  clear SEI mixed into the sample can drag an encrypted camera to a "clear" tie.
+- **Lost RTP fragments do not smear the picture.** A NAL split over several RTP
+  packets (FU) is dropped if a fragment is missing, instead of being glued
+  together — with AES-ECB a missing piece shifts every following 16-byte block,
+  so the rest of the NAL would decode as garbage. Sequence numbers are tracked
+  per **(SSRC, payload type)**: Hik streams carry video (96), metadata (112) and
+  audio (0) in one SSRC, each with its own counter (tracking per SSRC alone
+  reported 706 false gaps in 2318 packets on a live camera; per (SSRC, PT): 0).
 - **The picture starts clean, not grey.** The cloud stream begins mid-GOP and Hik
   NVRs resend parameter sets periodically, so the first VPS/SPS/PPS is *not*
   followed by an IDR. Forwarding from there leaves the decoder without reference
@@ -376,6 +390,14 @@ each one measured against real cameras:
   the other's rate limits. It is now derived from the machine and persisted to
   `feature_code.txt`, so it is stable across restarts but unique per install.
 
+- **No orphaned processes.** Each camera runs a proxy and an ffmpeg process.
+  They are stopped *and waited for* (no zombies, the port is free for the next
+  start), the proxy is closed as soon as a wrong code is detected, everything is
+  stopped on normal exit, and the decrypting proxy exits by itself when its
+  parent dies — even on `kill -9` — because it watches its stdin pipe for EOF.
+  The verification code reaches the proxy through `CLOUDCAM_CAM_KEY`, not the
+  command line, so it does not show up in the process list.
+
 ## Development
 
 ```bash
@@ -387,7 +409,9 @@ The test suite deliberately guards the failure modes above, including ones that
 are invisible at runtime: `-fflags nobuffer` silently discarding the first
 parameter sets, a cache invalidation losing its guard, the shared hardcoded
 `featureCode` creeping back in, the 2FA code being re-sent per camera instead of
-once per session, or settings not reaching the per-camera child processes.
+once per session, or settings not reaching the per-camera child processes,
+the verification code leaking onto the command line, an audio packet between
+video fragments being mistaken for packet loss, or a proxy outliving its parent.
 
 ## Notes & limits
 
@@ -398,8 +422,6 @@ once per session, or settings not reaching the per-camera child processes.
 - Simultaneous viewing is limited by your CPU/GPU, bandwidth, and the cloud's concurrent-stream limits.
 - `cloudcam keys` needs the account to allow 2FA elevation. Some accounts
   (shared devices, sub-accounts) will not return codes — enter them manually then.
-- Selective-encryption auto-detection currently applies to the **RTP** path.
-  On the MPEG-PS path every NAL body is decrypted.
 - Built on [`pyezvizapi`](https://pypi.org/project/pyezvizapi/) for the cloud stream transport.
 
 ## Disclaimer

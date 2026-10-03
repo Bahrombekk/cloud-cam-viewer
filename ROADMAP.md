@@ -156,7 +156,10 @@ Birinchi kadrgacha vaqtni haqiqatan quyidagilar belgilaydi:
 - [ ] **Port qayta ishlatilmaydi** — `stream_manager.py:349` `_next_port`, `:355` `remove()`
   - `_next_port` faqat oshadi (`remove()` uni qaytarmaydi); UI'dan ochib-yopishda cheksiz
     o'sadi va oxiri 65535 dan oshadi. Bo'shagan portlar uchun free-list.
-- [ ] **Eski subprocess `wait()` qilinmaydi** — `:100`, `:327-330`
+- [x] **Eski subprocess `wait()` qilinmaydi** — *bajarildi:* `_stop_proc` (terminate →
+  wait → kill, quvurlar yopiladi), kod xato bo'lsa proxy darhol yopiladi, `atexit`,
+  proxy ota-jarayon o'lsa stdin EOF orqali o'zi chiqadi (real kamerada `kill -9` bilan
+  tekshirildi). Quyidagi tavsif tarix uchun:
   - Kod bo'ylab `terminate()` bor, ammo **birorta** `wait()`/`poll()` yo'q → reaping GC'ga
     tayanadi; ko'p reconnect'da zombi jarayonlar (POSIX'da) va Windows'da ushlangan
     handle'lar. `terminate()` dan keyin qisqa `wait(timeout=…)`, keyin `kill()`.
@@ -232,8 +235,8 @@ Birinchi kadrgacha vaqtni haqiqatan quyidagilar belgilaydi:
 - [ ] Holat testlari: packet loss / reorder / duplicate / corrupt; jitter/pacing; ffmpeg
   crash/restart; disconnect/reconnect; key-error/offline/auth-error.
 - [ ] Regression: ma'lum stream fixture → kutilgan decoded frame/metrika.
-- [ ] **MPEG-PS yo'li deyarli test qilinmagan** — `PsStreamDecryptor` uchun birorta ham
-  maxsus test yo'q, holbuki u eng murakkab demux mantig'iga ega (`_demux`, `_decide`).
+- [ ] **MPEG-PS yo'li kam test qilingan** — `test_ps_and_rtp.py` selektiv/to'liq shifrni
+  PS ustida qamraydi; `_decide` ning H.264 va B-whole variantlari hali testsiz.
 
 ---
 
@@ -382,12 +385,15 @@ kerak emas. `central-server` ning prod o'lchovi (2026-09-30, DS-TCG406-E):
     ishlamaydi, holbuki aynan shu yerda `close()` unutilishi oson.
 - [ ] Typed return + custom domain exceptionlar; provider xatolarini umumiy exceptionlarga
   mapping (hozir ko'pi `RuntimeError`).
-- [ ] **`PsStreamDecryptor` da inter-shifr aniqlash yo'q** — `decrypt_proxy.py:462`
+- [x] **`PsStreamDecryptor` da inter-shifr aniqlash yo'q** — *bajarildi:* PS chiqishi
+  umumiy `_emit_nal` orqali (selektiv shifr aniqlash + IRAP darvozasi), README'dagi
+  cheklov olib tashlandi. Tavsif tarix uchun:
   - RTP yo'lidagi asosiy yutuq (selektiv shifrni oqimdan aniqlash) PS yo'lida yo'q:
     `_write_nal` har NAL body'ni deshifrlaydi. PS bilan uzatuvchi kamera selektiv shifrlasa,
     README tasvirlagan P-freym buzilishi qaytadi. Hozir README'da cheklov sifatida yozilgan —
     keyingi qadam: `_sample_inter` ni PS yo'liga ham ulash.
-- [ ] **`CloudClient.get_devices()` sahifalanmaydi va o'lik kod** — `client.py:276`
+- [ ] **`CloudClient.get_devices()` o'lik kod** — `client.py:276` *(sahifalash qo'shildi;
+  takror kod va chaqirilmasligi qoldi)*
   - `limit=50, offset=0` — faqat 1-sahifa. Hech qayerdan chaqirilmaydi
     (`decrypt_proxy._device_names` o'zining sahifalangan nusxasini ishlatadi).
   - Qanday: o'chirish yoki `_device_names` bilan birlashtirish (takror sessiya-qurish kodi
@@ -443,5 +449,10 @@ Tartib ataylab shunday: **avval himoya to'ri, keyin o'zgarish.**
   rang/buzuq kadr bo'lmaydi); `_IRAP_MAX_WAIT=400` dan keyin majburan ochiladi
 - [x] **Inter-shifr qarorining keshi** — kamera bo'yicha, o'zini tekshiradi
 - [x] **MPEG-PS bufer chegarasi** — start-kodsiz oqimda xotira oqishi yopildi
+- [x] **RTP seq nazorati** — (SSRC, PT) bo'yicha; video FU bo'lagi yo'qolsa NAL tashlanadi,
+  takroriy paket e'tiborsiz (real oqimda soxta uzilish: 706 → 0)
+- [x] **Inter namunasi faqat P/B slice'lardan** (SEI/AUD qarorni buzmaydi)
+- [x] **Tasdiqlash kodi argv'da emas** — `CLOUDCAM_CAM_KEY` orqali
+- [x] Token yo'li proxy'ga ABSOLUT uzatiladi (pip o'rnatilgan holatda cwd boshqa)
 - [x] Nozik joylarga testlar (identity / keys / vtm_cache / paced_writer / substream /
   session_reuse / stream_mode / h264_codec_choice / ffmpeg_flags / inter_encryption)
