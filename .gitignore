@@ -27,3 +27,6 @@ Thumbs.db
 
 # Terminal kodi (avtomatik hisoblanadi)
 feature_code.txt
+
+# Inter-shifr qarorining keshi (avtomatik)
+enc-*.json

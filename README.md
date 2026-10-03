@@ -253,6 +253,19 @@ each one measured against real cameras:
 
   Two more cameras from the same account after the change: HEVC `BF1916346`
   181 frames / 0 errors, H.264 `BD7793665` 192 frames / 1 error.
+- **The picture starts clean, not grey.** The cloud stream begins mid-GOP and Hik
+  NVRs resend parameter sets periodically, so the first VPS/SPS/PPS is *not*
+  followed by an IDR. Forwarding from there leaves the decoder without reference
+  frames and the viewer watches grey or smeared frames until the next keyframe.
+  Slices before the first IRAP are dropped (parameter sets still pass, the decoder
+  needs them); after 400 slices the gate opens anyway so a camera that never marks
+  an IRAP still shows something.
+- **The encryption decision is remembered per camera.** Whether inter (P/B) slices
+  are encrypted is a fixed property of the camera, but it was re-derived on every
+  open, and output was held back until the decision landed — measured at
+  **0.65–0.85 s** of the time to first frame. It is now cached to disk and the
+  cached answer is still verified in the background, so a firmware change corrects
+  itself instead of silently corrupting the picture.
 - **Jitter buffer.** The cloud does not deliver frames evenly — it sends a whole
   GOP at once and then goes quiet (measured: 491 of 500 frames arrived <10 ms
   apart, the remaining 9 gaps were ~2000 ms). Displaying frames on arrival looks

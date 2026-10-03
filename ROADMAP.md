@@ -119,13 +119,17 @@ Birinchi kadrgacha vaqtni haqiqatan quyidagilar belgilaydi:
 - [ ] **Single-flight** — `vtm_cache.py`
   - Bir vaqtda ko'p kamera sovuq keshda ochilsa, har biri alohida `pagelist` so'rovini otadi
     (thundering herd). Bitta uchuvchi so'rov qolganlarni kutdirsin.
-- [ ] **Shifr-qarori uchun buferlash** — `decrypt_proxy.py:101` `_INTER_SAMPLES = 8`
-  - **Yangi band.** "A-body" variantida dekodlovchi inter-slice qarorini chiqarmaguncha
-    chiqish navbatda ushlanadi — ya'ni **8 ta inter NAL** kutiladi (~15 fps da ~0.5s).
-    Qaror chiqmasa `_INTER_MAX_PENDING` (4 MB) gacha ushlanadi.
-  - Qanday: namunalar sonini kamaytirish xavfli (qaror sifati tushadi), lekin *ehtimollik
-    yetarli bo'lsa erta chiqish* mumkin: 4 ta namunada farq katta bo'lsa (masalan >0.5)
-    qarorni darrov qabul qilish. Avval o'lchang: qaror qancha vaqt oladi.
+- [x] **Shifr-qarori uchun buferlash** — BAJARILDI (`central-server` dan ko'chirildi)
+  - Qaror endi KAMERA bo'yicha diskka keshlanadi (`enc-<serial>-<ch>.json`): inter
+    shifri kameraning o'zgarmas xususiyati, shuning uchun har ochilishda qayta
+    aniqlashning ma'nosi yo'q. Kesh bo'lsa buferlash UMUMAN qilinmaydi.
+    O'lchov (`central-server`, bir xil dekoder): birinchi kadrgacha **0.65-0.85s**
+    tejaldi. Qaror baribir fonda tekshiriladi — proshivka o'zgarsa kesh o'zini
+    tuzatadi.
+  - Qolgan holat: kesh SOVUQ bo'lganda (kamera birinchi marta ochilganda) eski
+    kutish saqlanadi — 8 ta inter NAL, ~15 fps da ~0.5s. Buni ham qisqartirish
+    mumkin: 4 ta namunada farq keskin bo'lsa (>0.5) qarorni darrov qabul qilish.
+    Avval o'lchang — endi bu faqat BIRINCHI ochilishga tegadi, foydasi kam.
 - [ ] **Proxy pool / prefetch** — `stream_manager.py:98` `_start_proxy`
   - Har ochilish yangi `python -m cloudcam.decrypt_proxy` subprocess'i (interpretator
     ko'tarilishi + `numpy`/`Crypto` importi + bulut ulanishi) ≈ 0.5–2s. Ehtimoli bor
@@ -296,6 +300,31 @@ Quyidagilarni **regression fixture/testsiz** qayta yozmaslik:
 
 ---
 
+## 9b. ISUP 5.0 — bulutdan butunlay chiqish (kelajak yo'nalishi)
+
+> Hali bu loyihada yo'q. `central-server` da ishlab turibdi (`isup/bridge.cpp`,
+> `backend/app/sources/isup.py`) va kerak bo'lganda shu yerga ham olinadi.
+
+ISUP'da qurilma bulutga emas, **to'g'ridan-to'g'ri bizning serverga ulanadi**
+(17660/17661 portlari). Ya'ni VTM relay, deshifr va tasdiqlash kodi — hech biri
+kerak emas. `central-server` ning prod o'lchovi (2026-09-30, DS-TCG406-E):
+
+| O'lchov | Bulut (hozirgi yo'l) | ISUP |
+|---|---|---|
+| Birinchi paketgacha | 4–14 s | **0.23 s** |
+| Birinchi toza kadr (transkod bilan) | ~7–10 s | **0.33–0.38 s** |
+| Kanal limiti | 16 | yo'q |
+| Xato kadrlar (25 MB+) | — | 0 |
+
+- [ ] Agar bu loyiha ham ISUP'ni qo'llasa, u **yangi manba turi** bo'lishi kerak
+  (`source_type`), bulut yo'lini almashtirmasdan — ko'p kamera baribir faqat
+  bulut orqali yetib keladi.
+- [ ] Qaram joy: bridge C++ (Hikvision SDK), ya'ni Docker/konteyner talab qiladi.
+  Hozirgi "pip install + python app.py" oddiyligini buzadi — shuning uchun
+  ixtiyoriy qo'shimcha sifatida.
+
+---
+
 ## 10. MediaMTX / fan-out integratsiyasi (P2)
 
 - [ ] Core viewerga bog'lanib qolmasin; adapter sifatida:
@@ -405,5 +434,9 @@ Tartib ataylab shunday: **avval himoya to'ri, keyin o'zgarish.**
 - [x] Watchdog qotgan ffmpeg'ni o'ldiradi
 - [x] OpenCV core'dan ajratilgan (kech import, ixtiyoriy dep)
 - [x] `CloudCam` context manager
+- [x] **IRAP darvozasi** — birinchi IRAP gacha slice lar tashlanadi (boshida kul
+  rang/buzuq kadr bo'lmaydi); `_IRAP_MAX_WAIT=400` dan keyin majburan ochiladi
+- [x] **Inter-shifr qarorining keshi** — kamera bo'yicha, o'zini tekshiradi
+- [x] **MPEG-PS bufer chegarasi** — start-kodsiz oqimda xotira oqishi yopildi
 - [x] Nozik joylarga testlar (identity / keys / vtm_cache / paced_writer / substream /
   session_reuse / stream_mode / h264_codec_choice / ffmpeg_flags / inter_encryption)
