@@ -39,3 +39,11 @@ CAMKEY_FILE = "cam_keys.json"
 # Terminal kodi (featureCode) avtomatik hisoblanadi va `feature_code.txt` ga
 # yoziladi — sozlash shart emas. Faqat bir nechta mustaqil nusxa bitta
 # kompyuterda ishlashi kerak bo'lsa CLOUDCAM_FEATURE_CODE bilan ajrating.
+
+# === ISUP 5.0 (ixtiyoriy) ===
+# Qurilma bulutga emas, `isup-bridge` ga ulanadi: birinchi kadr ~0.3s,
+# tasdiqlash kodi va deshifr kerak emas. Ko'prik alohida o'rnatiladi
+# (ffmpeg kabi tashqi bog'liqlik) — bo'lmasa bulut yo'li o'z holicha ishlaydi.
+ISUP_URL       = "http://127.0.0.1:8091"       # ko'prikning HTTP API'si
+ISUP_TOKEN     = ""                             # X-Bridge-Token (ixtiyoriy)
+ISUP_RTSP_BASE = "rtsp://127.0.0.1:8554"       # ko'prik publish qiladigan MediaMTX

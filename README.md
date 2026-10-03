@@ -1,8 +1,11 @@
 # Cloud CCTV Viewer (EZVIZ / Hik-Connect)
 
-View **EZVIZ** and **Hikvision (Hik-Connect)** cloud cameras on your PC — including
-**encrypted** streams — using your own account. Multi-camera grid, 24/7 auto-reconnect,
-optional NVIDIA GPU decoding.
+A Python library for **EZVIZ** and **Hikvision** cameras, with a viewer on top.
+Reaches them two ways: through the **Hik-Connect / EZVIZ cloud** (including
+**encrypted** streams, decrypted locally with your account's verification codes)
+and through **ISUP 5.0**, where the device connects straight to you and the cloud
+is not involved at all. Multi-camera grid, 24/7 auto-reconnect, optional NVIDIA
+GPU decoding.
 
 > ⚠️ **For personal use with your own cameras and account only.** This talks to the
 > EZVIZ/Hik-Connect cloud the same way the official apps do (reverse-engineered protocol),
@@ -189,6 +192,7 @@ cloud-cam-viewer/
 │   ├── cli.py               # `cloudcam` command (cameras, keys, snapshot, view)
 │   ├── client.py            # cloud login, session reuse, verification-code fetch
 │   ├── identity.py          # per-install terminal id (featureCode)
+│   ├── isup.py              # ISUP 5.0 bridge client (cloud-free cameras)
 │   ├── keys.py              # verification-code store + cloud fetch (2FA flow)
 │   ├── settings.py          # Settings: config.py / CLOUDCAM_* env / defaults
 │   ├── stream_manager.py    # per-camera processes, reconnect, watchdog, GPU
@@ -207,6 +211,68 @@ cloud-cam-viewer/
 ```
 
 > Run all scripts from the project root (`python app.py`, `python check_code.py ...`).
+
+## ISUP 5.0 — cameras that dial out to you
+
+The cloud path works, but it runs on the cloud's terms: 4–14 s to the first
+frame, a cap on how many streams you may open, and occasional corruption. With
+**ISUP 5.0** the Hikvision device skips the cloud and connects *to your server*
+instead — no VTM relay, no verification code, no decryption.
+
+Measured on a live camera (DS-TCG406-E fw V5.4.0):
+
+| | Cloud | ISUP |
+|---|---|---|
+| "send video" → first packet | 4–14 s | **0.23 s** |
+| First clean frame (with transcode) | ~7–10 s | **0.33–0.38 s** |
+| Concurrent-stream cap | 16 | none |
+
+**The ISUP protocol itself cannot be spoken from Python** — registration,
+heartbeat and stream negotiation live inside Hikvision's closed SDK. So it is
+handled by an external bridge process, the same way video decoding is handled by
+an external `ffmpeg`. This library drives that bridge and consumes the plain
+RTSP it publishes:
+
+```
+camera ──ISUP 17660/17661──▶ isup-bridge ──RTSP (no transcode)──▶ cloudcam
+```
+
+The bridge is optional. Without it, everything above still works — the cloud
+path does not depend on it.
+
+```bash
+cloudcam isup devices                       # what has connected
+cloudcam isup keys AA1234567=SECRET --no-default
+```
+
+```
+$ cloudcam isup devices
+AA1234567  10.0.0.8        V5.4.0       kanal:2 onlayn:93s
+    ch1 main jonli  2.5 MB
+    ch2 sub  jim    0.0 MB
+```
+
+From Python:
+
+```python
+cam = CloudCam()                      # no cloud account needed for ISUP
+cam.isup.set_keys({"AA1234567": "SECRET"}, default=False)
+
+for c in cam.isup_cameras():
+    print(c.serial, c.channel, c.name)
+
+stream = cam.open_isup("AA1234567", channel=1)   # asks the bridge to open it
+frame = stream.frame()
+```
+
+`open_isup()` adds the stream to the bridge's "want" list and `close()` clears
+it, so the device only pushes video while someone is watching — the main stream
+is ~4 Mbit/s against ~0.3 Mbit/s for the substream, and at 0.23 s to open there
+is no reason to keep it running.
+
+Point the library at your bridge with `ISUP_URL`, `ISUP_TOKEN` and
+`ISUP_RTSP_BASE` in `config.py` (or `CLOUDCAM_ISUP_*`). Building the bridge
+needs Hikvision's ISUP SDK, which cannot be redistributed.
 
 ## Library API
 

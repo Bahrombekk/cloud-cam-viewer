@@ -37,12 +37,16 @@ class CameraStream:
     OFFLINE_BACKOFF_MAX = 60.0   # oflayn kamerani qayta sinash oralig'i (maks)
 
     def __init__(self, serial, channel, port, decrypt=False,
-                 width=None, height=None, key=None):
+                 width=None, height=None, key=None, url=None):
         self.serial = serial
         self.channel = channel
         self.port = port
         self.decrypt = decrypt
         self.key = key  # shifrlangan kamera "Tasdiqlash Kodu" (verification code)
+        # TASHQI manba (masalan ISUP ko'prigi bergan RTSP). Berilgan bo'lsa
+        # lokal dekodlovchi proxy ishga tushmaydi — oqim allaqachon toza
+        # ([[cloudcam.isup]]), ffmpeg uni to'g'ridan-to'g'ri o'qiydi.
+        self.url = url
         _s = get_active()
         self.width = width or _s.display_width
         self.height = height or _s.display_height
@@ -139,8 +143,12 @@ class CameraStream:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _ffmpeg_cmd(self):
-        url = f"http://127.0.0.1:{self.port}/{self.serial}.ts"
+        url = self.url or f"http://127.0.0.1:{self.port}/{self.serial}.ts"
         cmd = ["ffmpeg"]
+        if self.url and self.url.startswith("rtsp://"):
+            # RTSP: TCP majburan — UDP da paket yo'qolishi tasvirni buzadi,
+            # va NAT/konteyner tarmog'ida UDP ko'pincha umuman o'tmaydi.
+            cmd += ["-rtsp_transport", "tcp"]
         if self._use_gpu:
             # NVIDIA NVDEC — dekodni GPU ga o'tkazadi (ko'p kamera uchun CPU ni bo'shatadi)
             cmd += ["-hwaccel", "cuda"]
@@ -183,16 +191,18 @@ class CameraStream:
 
         while self.running:
             try:
-                # 1. Proxy ishga tushirish
-                self._start_proxy()
-                if not self._wait_port():
-                    self.connected = False
-                    self.reconnect_count += 1
-                    time.sleep(min(backoff, 30))
-                    backoff = min(backoff * 2, 30)
-                    continue
+                # 1. Proxy ishga tushirish — TASHQI manbada (ISUP) kerak emas:
+                #    oqim allaqachon toza RTSP, deshifr qilinadigan narsa yo'q.
+                if not self.url:
+                    self._start_proxy()
+                    if not self._wait_port():
+                        self.connected = False
+                        self.reconnect_count += 1
+                        time.sleep(min(backoff, 30))
+                        backoff = min(backoff * 2, 30)
+                        continue
 
-                time.sleep(0.3)  # proxy GET ga tayyor bo'lishi uchun qisqa kutish
+                    time.sleep(0.3)  # proxy GET ga tayyor bo'lishi uchun qisqa kutish
 
                 # 2. FFmpeg ishga tushirish
                 self.ffmpeg_proc = subprocess.Popen(
@@ -346,11 +356,15 @@ class StreamManager:
         self._token_thread = None
         self._running = False
 
-    def add(self, serial, channel=1, decrypt=False, width=None, height=None, key=None):
+    def add(self, serial, channel=1, decrypt=False, width=None, height=None,
+            key=None, url=None):
+        """Kamera qo'shadi. `url` berilsa — tashqi manba (ISUP RTSP), bulut
+        proxy'si ishlatilmaydi ([[CameraStream.url]])."""
         skey = (serial, channel)  # NVR'ning har kanali alohida stream
         if skey in self.streams:
             return self.streams[skey]
-        stream = CameraStream(serial, channel, self._next_port, decrypt, width, height, key)
+        stream = CameraStream(serial, channel, self._next_port, decrypt,
+                              width, height, key, url)
         self._next_port += 1
         self.streams[skey] = stream
         stream.start()

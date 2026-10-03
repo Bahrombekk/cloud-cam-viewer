@@ -23,8 +23,9 @@ _TRUE = ("1", "true", "yes", "on")
 
 # Bola-jarayonga UZATILMAYDIGAN maydonlar. Parol muhit o'zgaruvchisida
 # ko'p tizimlarda jarayonlar ro'yxati orqali ko'rinadi, bola-jarayonga esa
-# u umuman kerak emas — u tokenni faylidan o'qiydi.
-_ENV_EXCLUDE = frozenset({"password"})
+# u umuman kerak emas — u tokenni faylidan o'qiydi. `isup_token` ham xuddi
+# shunday: ko'prik bilan FAQAT ota-jarayon gaplashadi.
+_ENV_EXCLUDE = frozenset({"password", "isup_token"})
 
 
 def _coerce(type_name, raw: str):
@@ -59,6 +60,14 @@ class Settings:
     stream_mode: str = "main"
     token_file: str = "token.json"
     camkey_file: str = "cam_keys.json"
+    # ── ISUP 5.0 ([[isup]]) ───────────────────────────────────────────
+    # Qurilma bulutga emas, `isup-bridge` ga ulanadi. Ko'prik alohida
+    # jarayon (ffmpeg kabi tashqi bog'liqlik) — bu yerda faqat uning
+    # manzili. Ko'prik bo'lmasa hech narsa buzilmaydi: bulut yo'li o'z
+    # holicha ishlayveradi.
+    isup_url: str = "http://127.0.0.1:8091"      # ko'prikning HTTP API'si
+    isup_token: str = ""                          # X-Bridge-Token (ixtiyoriy)
+    isup_rtsp_base: str = "rtsp://127.0.0.1:8554"  # ko'prik publish qiladigan MediaMTX
 
     # ── manbalar ──────────────────────────────────────────────────────
     @classmethod

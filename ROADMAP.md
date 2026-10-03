@@ -302,8 +302,8 @@ Quyidagilarni **regression fixture/testsiz** qayta yozmaslik:
 
 ## 9b. ISUP 5.0 — bulutdan butunlay chiqish (kelajak yo'nalishi)
 
-> Hali bu loyihada yo'q. `central-server` da ishlab turibdi (`isup/bridge.cpp`,
-> `backend/app/sources/isup.py`) va kerak bo'lganda shu yerga ham olinadi.
+> Python tomoni BAJARILDI (`cloudcam/isup.py`, `CloudCam.open_isup`).
+> Ko'prikning o'zi (`isup-bridge`, C++) — tashqi bog'liqlik, `ffmpeg` kabi.
 
 ISUP'da qurilma bulutga emas, **to'g'ridan-to'g'ri bizning serverga ulanadi**
 (17660/17661 portlari). Ya'ni VTM relay, deshifr va tasdiqlash kodi — hech biri
@@ -316,12 +316,17 @@ kerak emas. `central-server` ning prod o'lchovi (2026-09-30, DS-TCG406-E):
 | Kanal limiti | 16 | yo'q |
 | Xato kadrlar (25 MB+) | — | 0 |
 
-- [ ] Agar bu loyiha ham ISUP'ni qo'llasa, u **yangi manba turi** bo'lishi kerak
-  (`source_type`), bulut yo'lini almashtirmasdan — ko'p kamera baribir faqat
-  bulut orqali yetib keladi.
-- [ ] Qaram joy: bridge C++ (Hikvision SDK), ya'ni Docker/konteyner talab qiladi.
-  Hozirgi "pip install + python app.py" oddiyligini buzadi — shuning uchun
-  ixtiyoriy qo'shimcha sifatida.
+- [x] Yangi manba turi sifatida qo'shildi — bulut yo'li TEGILMADI. ISUP kamerasi
+  `CameraStream(url=...)` orqali oddiy RTSP bo'lib keladi, deshifr proxy'si
+  ishga tushmaydi.
+- [x] Ko'prik IXTIYORIY: u bo'lmasa `cloudcam` o'z holicha ishlaydi va
+  `IsupUnavailable` tushunarli xato beradi. `pip install + python app.py`
+  oddiyligi saqlandi.
+- [ ] Ko'prikni qurish/joylashtirish hujjati (Docker, SDK qayerdan olinadi).
+  Hozircha `central-server/isup/README.md` da.
+- [ ] Qurilma ulanganda kanallarni avtomatik aniqlash (`central-server` da bor:
+  DEVICE_INFO + ISAPI InputProxy).
+- [ ] `always-warm` ro'yxati — tanlangan kameralar 24/7 ochiq tursin.
 
 ---
 

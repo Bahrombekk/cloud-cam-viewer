@@ -90,6 +90,45 @@ def cmd_keys(args) -> int:
     return 0
 
 
+def cmd_isup(args) -> int:
+    """ISUP ko'prigi: qurilmalar, kalitlar, holat. Bulut hisobi kerak emas."""
+    from .isup import IsupError, from_settings
+    from .settings import Settings
+
+    bridge = from_settings(Settings.resolve())
+    try:
+        if args.isup_cmd == "keys":
+            keys = {}
+            for pair in args.pair:
+                dev, _, key = pair.partition("=")
+                if not key:
+                    sys.exit(f"Format: <DeviceID>=<KALIT> (berildi: {pair!r})")
+                keys[dev] = key
+            res = bridge.set_keys(keys, default=not args.no_default)
+            print(f"Kalitlar yuborildi: {len(keys)} ta qurilma"
+                  + (f", {res['kicked']} ta uzildi" if res.get("kicked") else ""))
+            return 0
+
+        st = bridge.status()
+        if not st.keys_set:
+            print("(kalitlar hali yuborilmagan — `cloudcam isup keys ...`)")
+        for dev in st.devices:
+            flag = "" if dev.valid else "  [DeviceID formati shubhali]"
+            print(f"{dev.id}  {dev.ip or '-':<15} {dev.firmware or '-':<12} "
+                  f"kanal:{dev.channels_total} onlayn:{dev.online_seconds}s{flag}")
+            for s in dev.streams:
+                kind = "sub " if s.sub else "main"
+                live = "jonli" if s.live else "jim"
+                print(f"    ch{s.channel} {kind} {live}  {s.bytes / 1e6:.1f} MB")
+        for r in st.rejected:
+            print(f"RAD ETILDI {r.get('id')}: {r.get('reason')} x{r.get('count')}")
+        if not st.devices:
+            print("(ulangan qurilma yo'q)")
+    except IsupError as e:
+        sys.exit(str(e))
+    return 0
+
+
 def cmd_view(args) -> int:
     try:
         import cv2  # noqa: F401
@@ -124,6 +163,15 @@ def main(argv=None) -> int:
     kp.add_argument("--overwrite", action="store_true",
                     help="saqlangan kodlarni ham qayta olish")
     kp.set_defaults(fn=cmd_keys)
+
+    ip = sub.add_parser("isup", help="ISUP 5.0 ko'prigi (bulutsiz kameralar)")
+    isub = ip.add_subparsers(dest="isup_cmd")
+    isub.add_parser("devices", help="ulangan qurilmalar va oqimlar")
+    ik = isub.add_parser("keys", help="qurilma kalitlarini yuborish")
+    ik.add_argument("pair", nargs="+", metavar="DeviceID=KALIT")
+    ik.add_argument("--no-default", action="store_true",
+                    help="zaxira ISUP_KEY ishlatilmasin (tavsiya etiladi)")
+    ip.set_defaults(fn=cmd_isup, isup_cmd="devices")
 
     vp = sub.add_parser("view", help="OpenCV grid ko'ruvchi")
     vp.set_defaults(fn=cmd_view)
