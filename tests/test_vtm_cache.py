@@ -96,9 +96,8 @@ class _Client:
 
 @pytest.fixture
 def fake_cloud(monkeypatch):
-    """pyezvizapi'ning ichki funksiyalarini soxtasi bilan almashtiradi va
-    o'ramni ularning USTIGA yangidan o'rnatadi."""
-    import pyezvizapi.cloud_stream as _cs
+    """Bulut so'rovlarini (`cloudcam.vtm.cloud.fetch_*`) soxtasi bilan almashtiradi."""
+    from cloudcam.vtm import cloud as _cloud
 
     state = {"pagelist": {}, "calls": 0, "fail": False}
 
@@ -108,13 +107,12 @@ def fake_cloud(monkeypatch):
             raise RuntimeError("504 Gateway Timeout")
         return state["pagelist"][client.account]
 
-    def vtdu(client, *a, **kw):
+    def vtdu(client):
         return {"token": client.account}
 
-    monkeypatch.setattr(_cs, "get_vtm_page_list", pagelist)
-    monkeypatch.setattr(_cs, "get_vtdu_token_v2", vtdu)
-    vtm_cache.install()
-    return _cs, state
+    monkeypatch.setattr(_cloud, "fetch_vtm_page_list", pagelist)
+    monkeypatch.setattr(_cloud, "fetch_vtdu_token", vtdu)
+    return vtm_cache, state
 
 
 def _client(account, tmp_path):
@@ -127,33 +125,31 @@ def _client(account, tmp_path):
 def test_two_accounts_in_one_process_do_not_chain(fake_cloud, tmp_path):
     """Ikkinchi hisob birinchisining qurilma ro'yxatini OLMASLIGI kerak
     (central-server'da 4 hisobdan 3 tasi bir xil ro'yxatni ko'rardi)."""
-    _cs, state = fake_cloud
+    vc, state = fake_cloud
     state["pagelist"] = {"A": {"res": ["camA"]}, "B": {"res": ["camB"]}}
-    vtm_cache.install(str(tmp_path / "A.json"))
-    vtm_cache.install(str(tmp_path / "B.json"))          # qayta o'rnatish — zanjir yo'q
     a, b = _client("A", tmp_path), _client("B", tmp_path)
-    assert _cs.get_vtm_page_list(a) == {"res": ["camA"]}
-    assert _cs.get_vtm_page_list(b) == {"res": ["camB"]}
+    assert vc.pagelist(a) == {"res": ["camA"]}
+    assert vc.pagelist(b) == {"res": ["camB"]}
     assert vtm_cache.load("B", "pagelist") == {"res": ["camB"]}
     assert vtm_cache.load("A", "pagelist") == {"res": ["camA"]}
 
 
 def test_untagged_client_is_not_cached(fake_cloud):
-    _cs, state = fake_cloud
+    vc, state = fake_cloud
     state["pagelist"] = {"X": {"res": [1]}}
     c = _Client()
     c.account = "X"
-    _cs.get_vtm_page_list(c)
-    _cs.get_vtm_page_list(c)
+    vc.pagelist(c)
+    vc.pagelist(c)
     assert state["calls"] == 2                             # kesh yo'q — begona hisobga yozilmaydi
 
 
 def test_refresh_keeps_old_cache_when_cloud_fails(fake_cloud, tmp_path):
     """Bulut xato bersa eski kesh JOYIDA qoladi (ilgari invalidate uni bo'shatardi)."""
-    _cs, state = fake_cloud
+    vc, state = fake_cloud
     state["pagelist"] = {"A": {"res": ["old"]}}
     a = _client("A", tmp_path)
-    _cs.get_vtm_page_list(a)
+    vc.pagelist(a)
     state["fail"] = True
     assert vtm_cache.refresh(a) is False
     assert vtm_cache.load("A", "pagelist") == {"res": ["old"]}
@@ -166,10 +162,10 @@ def test_refresh_keeps_old_cache_when_cloud_fails(fake_cloud, tmp_path):
 def test_new_camera_found_by_one_pagelist_refresh(fake_cloud, tmp_path, monkeypatch):
     """Hisobga yangi qo'shilgan kamera eski keshda yo'q — bitta yangilash uni topadi,
     lekin yangi ro'yxat qayta-qayta so'ralmaydi (oflayn kameralar bulutni urmasin)."""
-    _cs, state = fake_cloud
+    vc, state = fake_cloud
     state["pagelist"] = {"A": {"res": ["cam1"]}}
     a = _client("A", tmp_path)
-    _cs.get_vtm_page_list(a)
+    vc.pagelist(a)
     state["pagelist"] = {"A": {"res": ["cam1", "cam2"]}}
     assert vtm_cache.refresh_pagelist(a, "A") is False     # ro'yxat juda yangi (< 30s)
     real_age = vtm_cache.age
@@ -180,10 +176,10 @@ def test_new_camera_found_by_one_pagelist_refresh(fake_cloud, tmp_path, monkeypa
 
 
 def test_warm_only_when_half_expired(fake_cloud, tmp_path, monkeypatch):
-    _cs, state = fake_cloud
+    vc, state = fake_cloud
     state["pagelist"] = {"A": {"res": [1]}}
     a = _client("A", tmp_path)
-    _cs.get_vtm_page_list(a)
+    vc.pagelist(a)
     calls = state["calls"]
     assert vtm_cache.warm(a, "A") is False                 # yangi kesh — tegmaydi
     assert state["calls"] == calls

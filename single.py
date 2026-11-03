@@ -9,28 +9,28 @@ Ishga tushirish:
 """
 
 import sys
-import time
 
 import cv2
 
 from cloudcam.client import CloudClient
+from cloudcam.i18n import t
 from cloudcam.stream_manager import StreamManager, load_cam_keys
 import config
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Foydalanish: python single.py <SERIAL> [--decrypt]")
+        print(t("Usage", "Foydalanish") + ": python single.py <SERIAL> [--decrypt]")
         return
     serial = sys.argv[1]
     decrypt = "--decrypt" in sys.argv
 
-    print("🔐 Sessiya tayyorlanmoqda...")
+    print("🔐 " + t("Preparing session...", "Sessiya tayyorlanmoqda..."))
     client = CloudClient(config.EMAIL, config.PASSWORD, config.REGION,
                          platform=getattr(config, "PLATFORM", "hikconnect"))
     # Saqlangan sessiya bo'lsa qayta login QILMAYMIZ ([[CloudClient.connect]])
     mode = client.connect(config.TOKEN_FILE)
-    print(f"✅ Tayyor ({mode})\n")
+    print(f"✅ {t('Ready', 'Tayyor')} ({mode})\n")
 
     manager = StreamManager(client=client)
     manager.start_token_refresh(interval=3600)
@@ -39,7 +39,7 @@ def main():
     stream = manager.add(serial, channel=1, decrypt=decrypt, width=1280, height=720,
                          key=load_cam_keys().get(serial) or "AUTO")
 
-    print("🎥 Stream ochilmoqda... (chiqish: 'q')")
+    print("🎥 " + t("Opening stream... (quit: 'q')", "Stream ochilmoqda... (chiqish: 'q')"))
     window = f"EZVIZ: {serial}"
 
     try:

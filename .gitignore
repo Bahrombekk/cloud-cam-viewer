@@ -30,3 +30,8 @@ feature_code.txt
 
 # Inter-shifr qarorining keshi (avtomatik)
 enc-*.json
+
+# Build output
+*.egg-info/
+build/
+dist/

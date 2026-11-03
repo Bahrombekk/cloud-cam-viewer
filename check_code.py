@@ -25,12 +25,12 @@ logging.basicConfig(level=logging.CRITICAL)
 
 import config
 from cloudcam import decrypt_proxy
+from cloudcam.i18n import t
 from cloudcam.decrypt_proxy import (
     HEVC_VIDEO_PT, H264RtpDecryptor, HevcRtpDecryptor, PsStreamDecryptor,
-    detect_rtp_codec,
+    detect_rtp_codec, open_cloud_stream,
 )
-from pyezvizapi.stream import rtp_payload
-from pyezvizapi.cloud_stream import open_cloud_stream
+from cloudcam.vtm import rtp_payload
 
 
 def check(client, serial, code, channel=1, timeout=30):
@@ -41,8 +41,7 @@ def check(client, serial, code, channel=1, timeout=30):
     pending = []          # codec aniqlanmaguncha paketlar shu yerda kutadi
     t0 = time.time()
     try:
-        with open_cloud_stream(client, serial, channel=channel,
-                               client_type=9, refresh_vtm=False, timeout=20.0) as s:
+        with open_cloud_stream(client, serial, channel=channel, timeout=20.0) as s:
             s.start()
             for pkt in s.iter_packets(max_packets=5000):
                 b = bytes(pkt.body)
@@ -107,22 +106,29 @@ def save_code(serial, code):
 def report(serial, code, channel, result):
     tag = f"{serial} ch{channel}"
     if result == "correct":
-        print(f"✅ {tag}: KOD TO'G'RI! Shifr ochildi.")
+        print(f"✅ {tag}: " + t("CODE IS CORRECT! Stream decrypted.",
+                              "KOD TO'G'RI! Shifr ochildi."))
         save_code(serial, code)
-        print(f"   💾 cam_keys.json ga saqlandi: {serial} -> {code}")
+        print("   💾 " + t(f"Saved to cam_keys.json: {serial} -> {code}",
+                          f"cam_keys.json ga saqlandi: {serial} -> {code}"))
     elif result == "clear":
-        print(f"⚠️  {tag}: kamera SHIFRLANMAGAN — kod kerak emas (kodsiz ishlaydi).")
+        print(f"⚠️  {tag}: " + t("camera is NOT ENCRYPTED — no code needed.",
+                               "kamera SHIFRLANMAGAN — kod kerak emas (kodsiz ishlaydi)."))
     elif result == "wrong":
-        print(f"❌ {tag}: KOD NOTO'G'RI! Boshqa kodni sinab ko'ring.")
+        print(f"❌ {tag}: " + t("WRONG CODE! Try another one.",
+                              "KOD NOTO'G'RI! Boshqa kodni sinab ko'ring."))
     elif result == "timeout":
-        print(f"⏱  {tag}: keyframe kelmadi (sekin/offline) — qayta urining.")
+        print(f"⏱  {tag}: " + t("no keyframe (slow/offline) — try again.",
+                              "keyframe kelmadi (sekin/offline) — qayta urining."))
     else:
-        print(f"❌ {tag}: oqim yo'q (kamera offline yoki kanal bo'sh).")
+        print(f"❌ {tag}: " + t("no stream (camera offline or empty channel).",
+                              "oqim yo'q (kamera offline yoki kanal bo'sh)."))
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Foydalanish: python check_code.py <SERIAL> [KOD] [KANAL|all]")
+        print(t("Usage: python check_code.py <SERIAL> [CODE] [CHANNEL|all]",
+                "Foydalanish: python check_code.py <SERIAL> [KOD] [KANAL|all]"))
         return
     serial = sys.argv[1]
     code = sys.argv[2].strip() if len(sys.argv) > 2 else "AUTO"
@@ -131,7 +137,8 @@ def main():
 
     client = decrypt_proxy._make_client()
     for ch in channels:
-        print(f"🔎 Tekshirilmoqda: {serial} ch{ch} (kod: {code}) ...")
+        print("🔎 " + t(f"Checking: {serial} ch{ch} (code: {code}) ...",
+                         f"Tekshirilmoqda: {serial} ch{ch} (kod: {code}) ..."))
         used, result = check_with_case_fallback(client, serial, code, ch)
         report(serial, used, ch, result)
 
@@ -144,7 +151,8 @@ def check_with_case_fallback(client, serial, code, channel=1):
     result = check(client, serial, code, channel)
     upper = code.upper()
     if result == "wrong" and upper != code:
-        print(f"   ↻ katta harf bilan qayta: {upper}")
+        print("   ↻ " + t(f"retrying in upper case: {upper}",
+                           f"katta harf bilan qayta: {upper}"))
         r2 = check(client, serial, upper, channel)
         if r2 == "correct":
             return upper, r2

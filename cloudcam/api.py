@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterator, Optional
+from typing import Iterator, Optional
 
 from .client import CloudClient
 from .settings import Settings, set_active
@@ -211,7 +211,10 @@ class CloudCam:
     # ── kameralar ────────────────────────────────────────────────────
     def cameras(self) -> list[Camera]:
         """Kamera ulangan kanallar ro'yxati (bo'sh NVR slotlari emas)."""
-        from . import decrypt_proxy
+        from . import decrypt_proxy, vtm_cache
+        # Shu hisob keshidan foydalanadi (va uni to'ldiradi) — keyingi `open()`
+        # pagelist'ni bulutdan qayta so'ramaydi ([[vtm_cache.tag]]).
+        vtm_cache.tag(self.client, self.settings.token_file)
         return [Camera(serial, ch, name)
                 for serial, ch, name in decrypt_proxy.list_cameras(self.client)]
 

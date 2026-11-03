@@ -43,6 +43,8 @@ from typing import Iterable
 
 import requests
 
+from .i18n import t
+
 DEFAULT_URL = "http://127.0.0.1:8091"
 DEFAULT_RTSP_BASE = "rtsp://127.0.0.1:8554"
 DEFAULT_TIMEOUT = 5.0
@@ -152,15 +154,18 @@ class IsupBridge:
                                 timeout=self.timeout)
         except requests.RequestException as e:
             raise IsupUnavailable(
-                f"isup-bridge javob bermadi ({self.url}): {e}") from e
+                t(f"isup-bridge did not respond ({self.url}): {e}",
+                  f"isup-bridge javob bermadi ({self.url}): {e}")) from e
         if r.status_code == 401:
-            raise IsupError("isup-bridge: token noto'g'ri (X-Bridge-Token)")
+            raise IsupError(t("isup-bridge: wrong token (X-Bridge-Token)",
+                              "isup-bridge: token noto'g'ri (X-Bridge-Token)"))
         if r.status_code >= 400:
             raise IsupError(f"isup-bridge {method} {path} -> {r.status_code}")
         try:
             return r.json()
         except ValueError as e:
-            raise IsupError(f"isup-bridge JSON bermadi: {r.text[:200]!r}") from e
+            raise IsupError(t(f"isup-bridge returned no JSON: {r.text[:200]!r}",
+                              f"isup-bridge JSON bermadi: {r.text[:200]!r}")) from e
 
     # ── holat ────────────────────────────────────────────────────────
     def health(self) -> bool:
@@ -208,7 +213,8 @@ class IsupBridge:
         lines.append(f"default {'on' if default else 'off'}")
         res = self._call("PUT", "/keys", "\n".join(lines) + "\n")
         if res.get("bad"):
-            raise IsupError(f"isup-bridge {res['bad']} ta kalit qatorini tushunmadi")
+            raise IsupError(t(f"isup-bridge could not parse {res['bad']} key line(s)",
+                              f"isup-bridge {res['bad']} ta kalit qatorini tushunmadi"))
         return res
 
     # ── qaysi oqim ochiq tursin ──────────────────────────────────────

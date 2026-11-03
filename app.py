@@ -26,21 +26,23 @@ import numpy as np
 from cloudcam.client import CloudClient
 from cloudcam.stream_manager import StreamManager, load_cam_keys
 from cloudcam import decrypt_proxy
+from cloudcam.i18n import t
 import config
 
 
 def choose_cameras(items):
     """items: [(serial, channel, name)] — faqat kamera ulangan kanallar."""
     print("\n" + "=" * 60)
-    print("📷 KAMERALAR RO'YXATI")
+    print("📷 " + t("CAMERAS", "KAMERALAR RO'YXATI"))
     print("=" * 60)
     for i, (serial, ch, name) in enumerate(items, 1):
         print(f"  [{i:2}] 🟢 {name}  ({serial} ch{ch})")
     if not items:
-        print("  (kamera topilmadi)")
+        print(t("  (no cameras found)", "  (kamera topilmadi)"))
     print("=" * 60)
-    print("Tanlash: raqamlarni vergul bilan (masalan: 1,3,5) yoki 'all'")
-    raw = input("➤ Tanlov: ").strip().lower()
+    print(t("Select: comma-separated numbers (e.g. 1,3,5) or 'all'",
+            "Tanlash: raqamlarni vergul bilan (masalan: 1,3,5) yoki 'all'"))
+    raw = input("➤ " + t("Choice: ", "Tanlov: ")).strip().lower()
 
     if raw == "all":
         return items
@@ -72,18 +74,17 @@ def make_grid(frames, labels, statuses, cols=None):
             cell = blank.copy()
             err = statuses[i].get("error") if i < n else None
             if err:
-                cv2.putText(cell, "XATO!", (w // 2 - 50, h // 2 - 15),
+                cv2.putText(cell, t("ERROR!", "XATO!"), (w // 2 - 50, h // 2 - 15),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
                 cv2.putText(cell, err, (10, h // 2 + 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
             elif i < n:
-                cv2.putText(cell, "Ulanmoqda...", (w // 2 - 80, h // 2),
+                cv2.putText(cell, t("Connecting...", "Ulanmoqda..."), (w // 2 - 80, h // 2),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
 
         if i < n:
             st = statuses[i]
             color = (0, 255, 0) if st["connected"] else (0, 0, 255)
-            dot = "●" if st["connected"] else "○"
             cv2.rectangle(cell, (0, 0), (w, 28), (0, 0, 0), -1)
             cv2.putText(cell, f"[{i+1}] {labels[i]}", (8, 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
@@ -101,26 +102,28 @@ def make_grid(frames, labels, statuses, cols=None):
 
 
 def main():
-    print("🔐 Sessiya tayyorlanmoqda...")
+    print("🔐 " + t("Preparing session...", "Sessiya tayyorlanmoqda..."))
     client = CloudClient(config.EMAIL, config.PASSWORD, config.REGION,
                          platform=getattr(config, "PLATFORM", "hikconnect"))
     # Saqlangan sessiya bo'lsa qayta login QILMAYMIZ — har safar login qilish
     # bulutda CAPTCHA va "yangi qurilma" 2FA sini keltirib chiqaradi
     # ([[CloudClient.connect]]).
     mode = client.connect(config.TOKEN_FILE)
-    print({"resumed": "✅ Saqlangan sessiya ishlatildi",
-           "refreshed": "✅ Sessiya yangilandi",
-           "login": "✅ Login muvaffaqiyatli!"}.get(mode, "✅ Tayyor"))
+    done = {"resumed": t("Reused saved session", "Saqlangan sessiya ishlatildi"),
+            "refreshed": t("Session refreshed", "Sessiya yangilandi"),
+            "login": t("Logged in", "Login muvaffaqiyatli!")}
+    print("✅ " + done.get(mode, t("Ready", "Tayyor")))
 
     # Faqat haqiqiy kamera ulangan kanallarni ko'rsatamiz (bo'sh NVR slotlari emas)
-    print("📡 Kameralar aniqlanmoqda...")
+    print("📡 " + t("Discovering cameras...", "Kameralar aniqlanmoqda..."))
     cams = decrypt_proxy.list_cameras()
     chosen = choose_cameras(cams)
     if not chosen:
-        print("❌ Hech qaysi kamera tanlanmadi")
+        print("❌ " + t("No camera selected", "Hech qaysi kamera tanlanmadi"))
         return
 
-    print(f"\n🚀 {len(chosen)} ta kamera ishga tushirilmoqda...")
+    print("\n🚀 " + t(f"Starting {len(chosen)} camera(s)...",
+                      f"{len(chosen)} ta kamera ishga tushirilmoqda..."))
 
     # StreamManager — client bilan (token refresh uchun)
     manager = StreamManager(client=client)
@@ -130,7 +133,8 @@ def main():
     # Kaliti bor kamera = shifrlangan -> proxy --decrypt-video bilan ochiladi.
     cam_keys = load_cam_keys()
     if cam_keys:
-        print(f"🔓 Shifrli kameralar (dekod yoqiladi): {list(cam_keys)}")
+        print("🔓 " + t(f"Encrypted cameras (decryption on): {list(cam_keys)}",
+                         f"Shifrli kameralar (dekod yoqiladi): {list(cam_keys)}"))
 
     labels, streams = [], []
     for serial, ch, name in chosen:
@@ -141,8 +145,9 @@ def main():
         streams.append(st)
         labels.append(name[:22])
 
-    print("⏳ Streamlar ulanmoqda...")
-    print("\n📺 Boshqaruv: q=chiqish | 1-9=to'liq ekran | g=grid | s=holat\n")
+    print("⏳ " + t("Connecting streams...", "Streamlar ulanmoqda..."))
+    print("\n📺 " + t("Controls: q=quit | 1-9=fullscreen | g=grid | s=status",
+                      "Boshqaruv: q=chiqish | 1-9=to'liq ekran | g=grid | s=holat") + "\n")
 
     window = "EZVIZ 24/7"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
@@ -163,12 +168,12 @@ def main():
                     big = np.zeros((720, 1280, 3), dtype=np.uint8)
                     err = statuses[fullscreen_idx].get("error")
                     if err:
-                        cv2.putText(big, "XATO!", (560, 330),
+                        cv2.putText(big, t("ERROR!", "XATO!"), (560, 330),
                                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
                         cv2.putText(big, err, (200, 380),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     else:
-                        cv2.putText(big, "Ulanmoqda...", (560, 360),
+                        cv2.putText(big, t("Connecting...", "Ulanmoqda..."), (560, 360),
                                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 200, 255), 2)
                 st = statuses[fullscreen_idx]
                 color = (0, 255, 0) if st["connected"] else (0, 0, 255)
@@ -200,7 +205,7 @@ def main():
                 if idx < len(streams):
                     fullscreen_idx = idx
     finally:
-        print("\n🛑 To'xtatilmoqda...")
+        print("\n🛑 " + t("Stopping...", "To'xtatilmoqda..."))
         manager.stop_all()
         cv2.destroyAllWindows()
 

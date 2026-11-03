@@ -111,7 +111,7 @@ def test_failed_login_backs_off_instead_of_hammering_the_cloud():
     with pytest.raises(RuntimeError, match="parol"):
         c.login()
     assert c._login_backoff >= CloudClient.LOGIN_BACKOFF_MIN
-    with pytest.raises(RuntimeError, match="qayta urinib"):
+    with pytest.raises(RuntimeError, match="retried in"):
         c.login()                                   # ikkinchi urinish — kutish
 
 

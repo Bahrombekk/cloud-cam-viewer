@@ -6,8 +6,7 @@ AES-ECB bilan shifrlaydi. Kalit = kamera "Tasdiqlash Kodu" (verification code),
 16 baytgacha nol bilan to'ldirilgan. Har NAL body ning birinchi 4096 baytigacha
 (to'liq 16-baytli bloklar) shifrlangan.
 
-pyezvizapi ning standart "stream proxy" buni ocha olmaydi (u MPEG-PS kutadi).
-Bu yerda biz o'zimiz:
+Bulut transporti (VTM/VTDU) — [[cloudcam.vtm]]. Bu yerda biz:
   1) VTM dan paketlarni o'qiymiz (RTP, MPEG-PS yoki MPEG-TS — avto-aniqlanadi)
   2) RTP/HEVC va RTP/H.264 ni depaketlaymiz (VPS/SPS/PPS + FU/AP) -> Annex-B
   3) Har NAL body ni verification code bilan dekodlaymiz
@@ -21,7 +20,6 @@ Ishga tushirish (odatda app.py/stream_manager chaqiradi):
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -31,63 +29,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from Crypto.Cipher import AES
 
-import requests as _rq
-import pyezvizapi.cloud_stream as _cs
-from pyezvizapi.client import EzvizClient
-from pyezvizapi.cloud_stream import open_cloud_stream
-from pyezvizapi.stream import rtp_payload
-
+from . import vtm as _vtm
 from . import vtm_cache
-from .client import safe_domain
-from .identity import feature_code
+from .client import CloudClient
+from .i18n import t
 from .settings import get_active
+from .vtm import STREAM_MAIN, STREAM_SUB, rtp_payload
 
-# Platformaga qarab klient turi (pagelist to'liq natija qaytarishi uchun muhim)
-_CLIENT_TYPE = "55" if get_active().platform == "hikconnect" else "1"
-
-
-def _paged_vtm_page_list(client):
-    """VTM pagelist'ni TO'LIQ (barcha sahifalar) yig'adi.
-    Kutubxona faqat 1-sahifani oladi va clientType si boshqacha -> ko'p NVR
-    hisobida kameralar topilmaydi. Shuning uchun to'g'ri header bilan xom so'rov."""
-    tok = getattr(client, "_token", {}) or {}
-    api = tok.get("api_url")
-    sess = _rq.Session()
-    sess.headers.update({
-        "clientType": _CLIENT_TYPE, "lang": "en-US",
-        "featureCode": feature_code(),        # shu o'rnatmaga xos ([[identity]])
-        "sessionId": str(tok.get("session_id")),
-    })
-    base = None
-    merged_res, merged_vtm = [], {}
-    offset = 0
-    for _ in range(40):
-        r = sess.get(f"https://{api}/v3/userdevices/v1/resources/pagelist",
-                     params={"filter": "VTM", "groupId": -1, "limit": 50, "offset": offset},
-                     timeout=25)
-        pl = r.json()
-        if base is None:
-            base = pl
-        res = pl.get("resourceInfos") or []
-        merged_res.extend(res)
-        vtm = pl.get("VTM")
-        if isinstance(vtm, dict):
-            merged_vtm.update(vtm)
-        page = pl.get("page") or {}
-        if not res or not page.get("hasNext"):
-            break
-        offset += len(res)
-    if base is not None:
-        base["resourceInfos"] = merged_res
-        base["VTM"] = merged_vtm
-    return base
-
-
-# kutubxonaning bir-sahifali funksiyasini to'liq sahifalovchi bilan almashtiramiz
-_cs.get_vtm_page_list = _paged_vtm_page_list
-# ...va uning USTIGA hisob bo'yicha fayl keshini qo'yamiz ([[vtm_cache]]):
+# Hisob kaliti — VTM metama'lumot keshi shu kalitda ([[vtm_cache]]):
 # pagelist + VTDU token har ochilishda ~6s bulutda ketardi, kesh bilan ~0.2s.
-_CACHE_KEY = vtm_cache.install()
+_CACHE_KEY = vtm_cache.account_key()
 
 HEVC_VIDEO_PT = 96                  # RTP payload type — video
 NAL_ENCRYPTED_PREFIX = 4096         # har NAL ning birinchi shu qadar bayti shifrlangan
@@ -624,7 +575,8 @@ class PsStreamDecryptor(_NalDecryptBase):
         super().__init__(key, cache_key=cache_key)
         self._buf = bytearray()   # demux qilinmagan PS qoldig'i
         self._es = bytearray()    # ajratilgan ES (NAL ga ajratilmagan qoldiq)
-        self._enc_off = None      # shifr boshlanish offseti: 0=butun NAL, 1=H.264, 2=HEVC header'dan keyin
+        # shifr boshlanish offseti: 0=butun NAL, 1=H.264, 2=HEVC header'dan keyin
+        self._enc_off = None
         self._undecided = []      # codec/shifr aniqlanmaguncha NAL larni vaqtincha saqlaymiz
         # (`_pending` nomi BAND — u ota klassning inter-qaror navbati)
         self.buf_resyncs = 0      # bufer chegarasidan oshib resync qilingan marta
@@ -682,23 +634,30 @@ class PsStreamDecryptor(_NalDecryptBase):
             return None
         PROF = self._PROFILES
         decB = [self._aes16(n) for n in big]      # variant B: butun NAL deshifrlangan boshi
+
+        def ok264(src):
+            return self._corrob(big, [self._h264_valid(m[0]) for m in src])
+
+        def ok265(src):
+            return self._corrob(big, [self._hevc_valid(m[0]) for m in src])
+
         for i, n in enumerate(big):
             # --- A) header TOZA, body shifrli/toza ---
             if (n[0] & 0x80) == 0 and (n[0] & 0x1F) == 7:           # H.264 SPS
-                if n[1] in PROF and self._corrob(big, [self._h264_valid(m[0]) for m in big]):
+                if n[1] in PROF and ok264(big):
                     return ("h264", 1, False)                       # toza oqim
-                if self._aes16(n[1:17])[0] in PROF and self._corrob(big, [self._h264_valid(m[0]) for m in big]):
+                if self._aes16(n[1:17])[0] in PROF and ok264(big):
                     return ("h264", 1, True)
             if (n[0] & 0x80) == 0 and ((n[0] >> 1) & 0x3F) == 32:   # HEVC VPS
-                if n[2] == 0x0C and self._corrob(big, [self._hevc_valid(m[0]) for m in big]):
+                if n[2] == 0x0C and ok265(big):
                     return ("hevc", 2, False)                       # toza oqim
-                if self._aes16(n[2:18])[0] == 0x0C and self._corrob(big, [self._hevc_valid(m[0]) for m in big]):
+                if self._aes16(n[2:18])[0] == 0x0C and ok265(big):
                     return ("hevc", 2, True)
             # --- B) BUTUN NAL shifrli (header ham) ---
             d = decB[i]
-            if (d[0] & 0x1F) == 7 and d[1] in PROF and self._corrob(big, [self._h264_valid(x[0]) for x in decB]):
+            if (d[0] & 0x1F) == 7 and d[1] in PROF and ok264(decB):
                 return ("h264", 0, True)
-            if ((d[0] >> 1) & 0x3F) == 32 and d[2] == 0x0C and self._corrob(big, [self._hevc_valid(x[0]) for x in decB]):
+            if ((d[0] >> 1) & 0x3F) == 32 and d[2] == 0x0C and ok265(decB):
                 return ("hevc", 0, True)
         if len(big) >= 24:        # yetarli NAL bor, lekin hech narsa mos kelmadi -> kod xato
             return "keyerror"
@@ -963,78 +922,54 @@ class PacedWriter:
             self._th.join(timeout=drain)
 
 
-_orig_build_vtm_url = None
+def open_cloud_stream(client, serial: str, *, channel: int = 1,
+                      stream_type: int = STREAM_MAIN, timeout: float | None = 20.0):
+    """Kamera oqimini ochadi (ishga tushirilmagan [[vtm.VtmStreamClient]]).
 
+    Metama'lumot (pagelist + VTDU token) hisob keshidan olinadi ([[vtm_cache]]).
 
-def set_substream(enable: bool) -> None:
-    """Bulutdan KICHIK (substream) oqimni so'raydi — VTM URL'idagi `stream=1`
-    o'rniga `stream=2`.
+    `stream_type=STREAM_SUB` — bulutdan KICHIK oqim (substream). Nega kerak:
+    grid'da har plitka ekranda ~250-500 px, kamera esa 2560x1440 yuboradi —
+    ekran ko'rsatolmaydigan ~30 barobar ortiqcha piksel. O'lchov (bir xil devor,
+    23 plitka): asosiy oqimda tasvir to'kilib qotgan, substream bilan har plitka
+    **640x360, ~0.11 Mbit/s** (asosiysi ~4 Mbit/s — 36 barobar kam) va hammasi
+    toza dekodlangan. Hamma kamerada substream bo'lavermaydi (batareyali
+    modellar) — shuning uchun "auto" rejim bor ([[serve]]).
 
-    Nega kerak: grid'da har plitka ekranda ~250-500 px, kamera esa 2560x1440
-    yuboradi — bu ekran ko'rsatolmaydigan ~30 barobar ortiqcha piksel. O'lchov
-    (bir xil devor, 23 plitka): asosiy oqimda tasvir to'kilib qotgan, substream
-    bilan har plitka **640x360, ~0.11 Mbit/s** (asosiysi ~4 Mbit/s — 36 barobar
-    kam) va hammasi toza dekodlangan. Zaif uplink'da paket yo'qolishi ham
-    kamayadi (yashil chiziqlar/buzilish).
-
-    Hamma kamerada substream bo'lavermaydi (masalan batareyali modellar) —
-    bunday holda bulut asosiy oqimni beradi, ya'ni zarari yo'q.
-    """
-    global _orig_build_vtm_url
-    import re as _re
-    if _orig_build_vtm_url is None:
-        _orig_build_vtm_url = _cs.build_vtm_url          # ASL nusxa (bir marta)
-    if enable:
-        def _sub(*a, **kw):
-            return _re.sub(r"(?<=[?&])stream=1(?=&|$)", "stream=2",
-                           _orig_build_vtm_url(*a, **kw))
-        _cs.build_vtm_url = _sub
-    else:
-        _cs.build_vtm_url = _orig_build_vtm_url
+    Ilgari bu kutubxonaning URL quruvchisini GLOBAL almashtirish (monkeypatch)
+    bilan qilinardi: ko'p threadli serverda ikki so'rov bir-birining rejimini
+    bosib ketishi mumkin edi, upstream URL formati o'zgarsa esa jimgina asosiy
+    oqimga aylanardi. Endi bu oddiy parametr."""
+    return _vtm.open_cloud_stream(
+        vtm_cache.pagelist(client), vtm_cache.vtdu(client), serial,
+        channel=channel, client_type=9, stream_type=stream_type, timeout=timeout)
 
 
 def _make_client():
-    import re
-    with open(get_active().token_file, encoding="utf-8") as f:
-        token = json.load(f)
-    # Pagelist va qurilma nomlari so'rovlari `sessionId` ni shu domenga yuboradi —
-    # token fayli begona hostga ishora qilsa ishlamaymiz ([[client.safe_domain]]).
-    token["api_url"] = safe_domain(token.get("api_url"))
-    client = EzvizClient(token.get("username"), None, token.get("api_url"), token=token)
-    # Klient turi — busiz pagelist hamma resurslarni qaytarmaydi (platformaga qarab)
-    try:
-        client._session.headers.update({"clientType": _CLIENT_TYPE, "lang": "en-US"})
-    except Exception:
-        pass
-    # Hik-Connect authAddr ni "https://null" qaytaradi -> regiondan derive qilamiz
-    # (apiiSGP.hik-connect.com -> sgpauth.ezvizlife.com). EZVIZ uchun ham to'g'ri.
-    su = (token.get("service_urls") or {})
-    if not su.get("authAddr") or "null" in str(su.get("authAddr")).lower():
-        m = re.match(r"apii([a-z]+)\.", str(token.get("api_url", "")))
-        if m:
-            client._token.setdefault("service_urls", {})["authAddr"] = \
-                f"https://{m.group(1)}auth.ezvizlife.com"
-    # Hisob kaliti MIJOZGA bog'lanadi — kesh o'rami shundan o'qiydi ([[vtm_cache.tag]]).
+    """Token faylidan sessiya (login QILINMAYDI).
+
+    [[CloudClient.load_token]] domen va terminal kodini tekshiradi: token fayli
+    begona hostga ishora qilsa yoki boshqa kompyuterdan ko'chirilgan bo'lsa
+    sessiya `sessionId` bilan hech qayerga yuborilmaydi."""
+    s = get_active()
+    client = CloudClient(None, None, platform=s.platform)
+    if not client.load_token(s.token_file):
+        raise RuntimeError(t(f"No usable session in {s.token_file} — log in first",
+                             f"{s.token_file} da yaroqli sessiya yo'q — avval login qiling"))
+    # Hisob kaliti MIJOZGA bog'lanadi — kesh shundan o'qiydi ([[vtm_cache.tag]]).
     vtm_cache.tag(client)
     return client
 
 
 def _device_names(client):
     """{serial: qurilma_nomi} — ilovadagi nomlar (NVR/kamera nomi)."""
-    tok = getattr(client, "_token", {}) or {}
-    api = tok.get("api_url")
-    sess = _rq.Session()
-    sess.headers.update({
-        "clientType": _CLIENT_TYPE, "lang": "en-US",
-        "featureCode": feature_code(),        # shu o'rnatmaga xos ([[identity]])
-        "sessionId": str(tok.get("session_id")),
-    })
     names = {}
     offset = 0
     for _ in range(40):
-        r = sess.get(f"https://{api}/v3/userdevices/v1/devices/pagelist",
-                     params={"filter": "CONNECTION", "groupId": -1, "limit": 50, "offset": offset},
-                     timeout=25)
+        r = client.session.get(
+            f"https://{client.api_url}/v3/userdevices/v1/devices/pagelist",
+            params={"filter": "CONNECTION", "groupId": -1, "limit": 50, "offset": offset},
+            timeout=25)
         d = r.json()
         di = d.get("deviceInfos") or []
         for x in di:
@@ -1051,14 +986,12 @@ def list_cameras(client=None):
     Nom = "Qurilma nomi — Kanal nomi" (ilovadagi nom bilan moslash uchun).
     VTM resurslaridan olinadi — bo'sh NVR kanallari (kamera ulanmagan) ko'rsatilmaydi.
 
-    `client` — pyezvizapi `EzvizClient` (token bilan). Yuqori darajali API o'zining
-    `CloudClient` obyektini uzatardi, unda esa `_token` yo'q: natijada so'rov
-    `https://none/...` ga ketib `NameResolutionError` berardi. Shuning uchun mos
-    kelmaydigan obyekt uzatilsa token fayldan o'zimiz quramiz."""
-    if client is None or not getattr(client, "_token", None):
+    `client` — sessiyasi bor [[CloudClient]]. Berilmasa yoki sessiyasiz bo'lsa
+    token fayldan quriladi ([[_make_client]])."""
+    if client is None or not getattr(client, "session_id", None):
         client = _make_client()
     dev_names = _device_names(client)
-    res = _cs.get_vtm_page_list(client).get("resourceInfos", []) or []
+    res = vtm_cache.pagelist(client).get("resourceInfos", []) or []
     cams = []
     for r in res:
         try:
@@ -1091,7 +1024,7 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
     asosiy oqimga qaytiladi.
 
     Nega "auto" kerak: substream trafikni ~36 barobar kamaytiradi
-    ([[set_substream]]), lekin hamma kamerada ham yo'q (batareyali modellar,
+    ([[open_cloud_stream]]), lekin hamma kamerada ham yo'q (batareyali modellar,
     ba'zi NVR kanallari). Qattiq `--stream=sub` bunday kamerada qora ekran
     beradi; qattiq "main" esa grid'da bekorga 1440p tortadi. `hikcloudstream`
     ham shu yo'ldan boradi: substream'ni sinab ko'rib, kerak bo'lsa asosiysiga
@@ -1179,8 +1112,6 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                 return _is_missing_resource(e) and vtm_cache.refresh_pagelist(client, _CACHE_KEY)
 
             # "auto": avval KICHIK oqim, kadr kelmasa asosiysi ([[serve]]).
-            # Har urinish uchun `set_substream` qayta chaqiriladi, chunki u
-            # kutubxonaning URL quruvchisini almashtiradi.
             attempts = [("sub", STREAM_PROBE_TIMEOUT), ("main", 20.0)] if mode == "auto" \
                 else [(mode, 20.0)]
             opened = None
@@ -1189,10 +1120,10 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                 for want, tmo in attempts:
                     # Bu urinish PROBE mi (ya'ni muvaffaqiyatsizlikda keyingisi bor)
                     is_probe = want == "sub" and mode == "auto"
-                    set_substream(want == "sub")
                     try:
-                        cm = open_cloud_stream(client, serial, channel=channel,
-                                               client_type=9, refresh_vtm=False, timeout=tmo)
+                        cm = open_cloud_stream(
+                            client, serial, channel=channel, timeout=tmo,
+                            stream_type=STREAM_SUB if want == "sub" else STREAM_MAIN)
                     except Exception as e:
                         if is_probe:
                             continue                  # substream yo'q — asosiysini sinaymiz
@@ -1247,13 +1178,16 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                         annexb = False
                     elif not is_rtp:
                         dec = PsStreamDecryptor(key, cache_key=ck)  # MPEG-PS (H.264/HEVC avto)
-                        transform = dec.feed; keyerr = lambda: dec.key_error
+                        transform = dec.feed
+                        keyerr = lambda: dec.key_error
                     elif codec == "h264":
                         dec = H264RtpDecryptor(key, cache_key=ck)   # RTP/H.264
-                        transform = dec.feed; keyerr = lambda: dec.key_error
+                        transform = dec.feed
+                        keyerr = lambda: dec.key_error
                     else:
                         dec = HevcRtpDecryptor(key, cache_key=ck)   # RTP/HEVC
-                        transform = dec.feed; keyerr = lambda: dec.key_error
+                        transform = dec.feed
+                        keyerr = lambda: dec.key_error
 
                     self.send_response(200)
                     self.send_header("Content-Type", "application/octet-stream")
@@ -1309,7 +1243,8 @@ def resolve_key(arg: str) -> str:
         return arg
     key = os.environ.get(KEY_ENV)
     if not key:
-        sys.exit(f"Kalit topilmadi: CODE='-' lekin {KEY_ENV} bo'sh")
+        sys.exit(t(f"No key: CODE='-' but {KEY_ENV} is empty",
+                   f"Kalit topilmadi: CODE='-' lekin {KEY_ENV} bo'sh"))
     return key
 
 
@@ -1338,9 +1273,10 @@ def watch_parent(stream=None, on_exit=None) -> threading.Thread:
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Foydalanish: python -m cloudcam.decrypt_proxy "
+        print(t("Usage", "Foydalanish") + ": python -m cloudcam.decrypt_proxy "
               "<SERIAL> <PORT> <CODE|-> [CHANNEL] [--stream=main|sub|auto]\n"
-              f"  CODE='-' -> kalit {KEY_ENV} muhit o'zgaruvchisidan olinadi")
+              + t(f"  CODE='-' -> key is read from the {KEY_ENV} environment variable",
+                  f"  CODE='-' -> kalit {KEY_ENV} muhit o'zgaruvchisidan olinadi"))
         sys.exit(1)
     if os.environ.get(PARENT_WATCH_ENV) == "1":
         watch_parent()

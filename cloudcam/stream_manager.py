@@ -20,6 +20,7 @@ import weakref
 
 import numpy as np
 
+from .i18n import t
 from .settings import get_active
 
 # Shifr kodi proxy subprocess'iga shu muhit o'zgaruvchisi orqali uzatiladi
@@ -105,6 +106,9 @@ class CameraStream:
         self.reconnect_count = 0
         self.fps = 0
         self.error = None  # masalan: shifr kodi xato yoki signal yo'q
+        # error vaqtinchami (OFFLINE / signal yo'q / qotgan) — kadr kelsa tozalanadi.
+        # Matn tilga bog'liq, shuning uchun qaror matndan emas, shu bayroqdan.
+        self._error_transient = False
         self._consec_empty = 0  # ketma-ket kadrsiz urinishlar (bo'sh kanalni aniqlash)
         self._offline_tries = 0  # ketma-ket OFFLINE urinishlar (kutishni uzaytirish)
 
@@ -140,7 +144,7 @@ class CameraStream:
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def _python_exe(self):
-        """venv python (pyezvizapi/Crypto shu yerda). 'py app.py' bilan ham ishlashi uchun."""
+        """venv python (Crypto/requests shu yerda). 'py app.py' bilan ham ishlashi uchun."""
         venv_py = os.path.join(self._project_root(), "venv", "Scripts", "python.exe")
         return venv_py if os.path.exists(venv_py) else sys.executable
 
@@ -166,31 +170,23 @@ class CameraStream:
         # faylni qidirib proxy darhol yiqilardi.
         token_file = os.path.abspath(s.token_file)
         env["CLOUDCAM_TOKEN_FILE"] = token_file
-        if self.decrypt and self.key:
-            # Shifrlangan kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan).
-            # Kod = AES kalit: argv'da process ro'yxatida hammaga ko'rinardi, shuning
-            # uchun env orqali beriladi ("-" — "kalitni env'dan ol" belgisi).
-            env[KEY_ENV] = self.key
-            env[PARENT_WATCH_ENV] = "1"
-            cmd = [
-                python, "-m", "cloudcam.decrypt_proxy",
-                self.serial, str(self.port), "-", str(self.channel),
-            ]
-            # Grid uchun bulutdan KICHIK oqim so'raymiz ([[set_substream]]):
-            # plitka baribir ~250-500 px, 1440p esa 36 barobar ortiqcha trafik.
-            mode = "sub" if s.substream else s.stream_mode
-            if mode in ("sub", "auto"):
-                cmd.append(f"--stream={mode}")
-        else:
-            # Shifrlanmagan kamera — standart pyezvizapi proxy (modul sifatida)
-            cmd = [
-                python, "-m", "pyezvizapi", "--token-file", token_file,
-                "stream", "proxy",
-                "--serial", self.serial,
-                "--channel", str(self.channel),
-                "--listen-port", str(self.port),
-                "--allow-encrypted",
-            ]
+        # Har kamera — o'z dekodlovchi proxy (modul sifatida, loyiha ildizidan).
+        # Shifrlanmagan kamera ham shu yerdan o'tadi: dekoderlar toza oqimni
+        # o'zi aniqlab, o'zgartirmasdan uzatadi ("AUTO" kaliti). Ilgari buning
+        # uchun alohida `python -m pyezvizapi ... stream proxy` jarayoni bor edi.
+        # Kod = AES kalit: argv'da process ro'yxatida hammaga ko'rinardi, shuning
+        # uchun env orqali beriladi ("-" — "kalitni env'dan ol" belgisi).
+        env[KEY_ENV] = self.key if (self.decrypt and self.key) else "AUTO"
+        env[PARENT_WATCH_ENV] = "1"
+        cmd = [
+            python, "-m", "cloudcam.decrypt_proxy",
+            self.serial, str(self.port), "-", str(self.channel),
+        ]
+        # Grid uchun bulutdan KICHIK oqim so'raymiz ([[decrypt_proxy.open_cloud_stream]]):
+        # plitka baribir ~250-500 px, 1440p esa 36 barobar ortiqcha trafik.
+        mode = "sub" if s.substream else s.stream_mode
+        if mode in ("sub", "auto"):
+            cmd.append(f"--stream={mode}")
         # stdin=PIPE — ota jarayon yiqilsa quvur yopiladi va decrypt_proxy buni
         # sezib chiqadi ([[PARENT_WATCH_ENV]]). Biz unga hech narsa yozmaymiz.
         self.proxy_proc = subprocess.Popen(
@@ -302,9 +298,12 @@ class CameraStream:
                     # Kod umuman yo'q bo'lsa "AUTO" beriladi — bunda "kod xato"
                     # deyish chalg'itadi: foydalanuvchi mavjud bo'lmagan faylni
                     # tekshirishga tushadi. Nima qilish kerakligini aytamiz.
-                    self.error = ("Shifr kodi yo'q — `cloudcam keys` ishga tushiring"
+                    self.error = (t("No verification code - run `cloudcam keys`",
+                                    "Shifr kodi yo'q — `cloudcam keys` ishga tushiring")
                                   if not self.key or self.key == "AUTO"
-                                  else "Shifr kodi xato! cam_keys.json ni tekshiring")
+                                  else t("Wrong verification code! Check cam_keys.json",
+                                         "Shifr kodi xato! cam_keys.json ni tekshiring"))
+                    self._error_transient = False
                     self.connected = False
                     # qayta urinish foydasiz (kod baribir xato) — proxy ham
                     # yopiladi, aks holda stop() gacha portni band qilib turardi
@@ -320,8 +319,11 @@ class CameraStream:
                     self._offline_tries += 1
                     wait = min(self.OFFLINE_BACKOFF_MAX,
                                15 * min(self._offline_tries, 4))
-                    self.error = (f"OFFLINE (kamera o'chiq yoki signal yo'q) — "
-                                  f"{wait:.0f}s dan keyin qayta urinamiz")
+                    self.error = t(f"OFFLINE (camera off or no signal) - "
+                                   f"retrying in {wait:.0f}s",
+                                   f"OFFLINE (kamera o'chiq yoki signal yo'q) — "
+                                   f"{wait:.0f}s dan keyin qayta urinamiz")
+                    self._error_transient = True
                     self.connected = False
                     time.sleep(wait)
                     continue
@@ -334,13 +336,15 @@ class CameraStream:
                 # Bo'sh kanal (kamera ulanmagan) ni aniqlash: ketma-ket kadrsiz urinishlar
                 if frames_this_attempt > 0:
                     self._consec_empty = 0
-                    if self.error and any(w in self.error for w in
-                                          ("Signal", "OFFLINE", "qotdi")):
+                    if self.error and self._error_transient:
                         self.error = None  # kamera qaytib keldi
+                        self._error_transient = False
                 else:
                     self._consec_empty += 1
                     if self._consec_empty >= 3 and not self.error:
-                        self.error = "Signal yo'q (kamera ulanmagan?)"
+                        self.error = t("No signal (camera not connected?)",
+                                       "Signal yo'q (kamera ulanmagan?)")
+                        self._error_transient = True
 
             except Exception:
                 pass
@@ -369,7 +373,9 @@ class CameraStream:
             if ref and time.time() - ref > self.FREEZE_TIMEOUT:
                 self.connected = False
                 if self.error is None:
-                    self.error = "Oqim qotdi (kadr yo'q) — qayta ulanmoqda"
+                    self.error = t("Stream frozen (no frames) - reconnecting",
+                                   "Oqim qotdi (kadr yo'q) — qayta ulanmoqda")
+                    self._error_transient = True
                 try:
                     self.ffmpeg_proc.kill()   # read() uziladi -> reader qayta ulanadi
                 except Exception:
@@ -469,9 +475,11 @@ class StreamManager:
                         continue
                     self.client.refresh_session()
                     self.client.save_token(get_active().token_file)
-                    print(f"[{time.strftime('%H:%M:%S')}] 🔄 Token yangilandi")
+                    print(f"[{time.strftime('%H:%M:%S')}] 🔄 "
+                          + t("Token refreshed", "Token yangilandi"))
                 except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️  Token yangilash xatosi: {e}")
+                    print(f"[{time.strftime('%H:%M:%S')}] ⚠️  "
+                          + t(f"Token refresh failed: {e}", f"Token yangilash xatosi: {e}"))
 
         self._token_thread = threading.Thread(target=loop, daemon=True)
         self._token_thread.start()

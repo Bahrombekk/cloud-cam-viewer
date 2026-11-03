@@ -1,115 +1,150 @@
-# Cloud CCTV Viewer (EZVIZ / Hik-Connect)
+# cloudcam — EZVIZ / Hik-Connect cloud cameras in Python
 
-A Python library for **EZVIZ** and **Hikvision** cameras, with a viewer on top.
-Reaches them two ways: through the **Hik-Connect / EZVIZ cloud** (including
-**encrypted** streams, decrypted locally with your account's verification codes)
-and through **ISUP 5.0**, where the device connects straight to you and the cloud
-is not involved at all. Multi-camera grid, 24/7 auto-reconnect, optional NVIDIA
-GPU decoding.
+[![CI](https://github.com/Bahrombekk/cloud-cam-viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Bahrombekk/cloud-cam-viewer/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Bahrombekk/cloud-cam-viewer?include_prereleases)](https://github.com/Bahrombekk/cloud-cam-viewer/releases)
+[![Stars](https://img.shields.io/github/stars/Bahrombekk/cloud-cam-viewer?style=social)](https://github.com/Bahrombekk/cloud-cam-viewer/stargazers)
 
-> ⚠️ **For personal use with your own cameras and account only.** This talks to the
-> EZVIZ/Hik-Connect cloud the same way the official apps do (reverse-engineered protocol),
-> then decrypts the video locally with your camera's verification code. Respect the
-> providers' Terms of Service.
+**Watch and decrypt your EZVIZ / Hik-Connect cameras without the vendor app, even
+when the stream is encrypted and the camera has no RTSP port open.**
+`cloudcam` logs in to the cloud the way the official app does, decrypts the video
+on your machine with the camera's verification code, and hands you plain
+H.264/H.265 frames as a CLI, a multi-camera viewer or a Python library.
+Hikvision devices can skip the cloud completely over **ISUP 5.0**.
+
+<!-- DEMO: replace with a 20–40 s recording of `python app.py` (grid → fullscreen).
+<p align="center"><img src="docs/demo.gif" alt="cloudcam grid viewer" width="800"></p>
+-->
+
+> ⚠️ **For your own cameras and account only.** Unofficial, reverse-engineered
+> client; not affiliated with EZVIZ or Hikvision. Respect the providers' Terms of Service.
+
+## Why this exists
+
+Millions of EZVIZ and Hikvision cameras are only reachable **through the cloud**:
+they sit behind CGNAT or someone else's router, RTSP is disabled, or the camera is
+a cloud-only model. The vendor app is the only way to watch them, and its stream is
+AES-encrypted with the camera's verification code. So you cannot:
+
+- record the camera in your own NVR, Frigate or Home Assistant;
+- run your own computer-vision / AI on the video;
+- watch 30 cameras from 8 NVRs on one screen without the app.
+
+`cloudcam` closes that gap: cloud stream → local decryption → frames you control.
+
+| | Vendor app | HA EZVIZ integration | go2rtc / MediaMTX | **cloudcam** |
+|---|:---:|:---:|:---:|:---:|
+| Camera with no local RTSP (cloud only) | ✅ | ❌ needs LAN RTSP | ❌ needs a source | ✅ |
+| Encrypted stream decrypted locally | ✅ (inside the app) | ❌ | ❌ | ✅ |
+| Video as frames in your own code | ❌ | ❌ | ✅ (from RTSP) | ✅ |
+| Hikvision ISUP 5.0, no cloud at all | ❌ | ❌ | ❌ | ✅ (via bridge) |
+| RTSP / WebRTC restream | ❌ | ✅ | ✅ | 🚧 [v0.4](#roadmap) |
+
+*`cloudcam` is meant to sit **in front of** go2rtc / MediaMTX / Frigate, not to replace them.*
 
 ## Features
 
-- 🔐 Login to **EZVIZ** or **Hik-Connect** (auto region detection), with the
-  session **reused across restarts** — no repeated CAPTCHA / "new device" 2FA
-- 🔑 **Fetches verification codes from the cloud** (`cloudcam keys`) — no more
-  reading codes off device labels
-- 📷 Lists all devices & **NVR channels** as separate cameras (e.g. 8 NVRs → 32 cameras)
-- 🔓 **Decrypts encrypted streams** with the device verification code (AES). Auto-detects
-  transport (**RTP**, **MPEG-PS**, MPEG-TS) and codec (**H.264** & **H.265/HEVC**) per camera —
-  no per-device configuration
-- 🟢 Auto-detects clear vs encrypted vs wrong-code per camera
-- 📉 **Substream for grids**, with an `auto` mode that falls back to the main
-  stream on cameras that have no substream
-- ⚡ Optional **GPU (NVIDIA NVDEC)** decoding with software fallback
-- ♻️ 24/7 — auto-reconnect, frozen-stream watchdog, age-based token refresh
-- 🖥️ Grid view, fullscreen (keys `1`–`9`), live status (FPS, reconnects)
-- 🛠️ Tools to **save** (`set_code.py`) and **verify** (`check_code.py`) codes by hand
+- 🔐 **EZVIZ and Hik-Connect** login with auto region detection; the session is
+  **reused across restarts**, so you don't hit repeated CAPTCHA or "new device" 2FA
+- 🔓 **Decrypts encrypted streams** locally (AES, key = verification code).
+  **RTP, MPEG-PS and MPEG-TS** transports, **H.264 and H.265/HEVC**, all encryption
+  variants. Everything is detected per camera, so there is nothing to configure.
+- 🔑 **Gets verification codes from the cloud** (`cloudcam keys`), so you don't have to read device labels
+- 📷 Every device **and every NVR channel** listed as its own camera
+- 📡 **ISUP 5.0**: Hikvision devices dial out to *your* server; first frame in **0.33 s**
+- 📉 **Substream for grids** (36× less traffic) with automatic fallback to the main stream
+- ⚡ Optional **NVIDIA NVDEC** decoding with software fallback
+- ♻️ Built for 24/7: auto-reconnect, frozen-stream watchdog, a jitter buffer that smooths cloud bursts
+- 🧪 150+ tests, and none of them need a cloud account
 
-## How it works
+## Quick start
 
-```
-Cloud login (session reused)  →  device/stream metadata (cached per account)
-   →  connect to cloud VTM relay  →  receive RTP/HEVC, MPEG-PS or MPEG-TS packets
-   →  decrypt NAL bodies (AES, key = verification code)  →  Annex-B over local HTTP
-   →  jitter buffer (paced at the measured frame rate)  →  ffmpeg  →  decode & display
-```
-
-The camera **verification code** (the code you set when adding the device to the app, usually
-on the device label) is the AES key. Live viewing requires no subscription.
-
-## Requirements
-
-- Python 3.10+
-- [FFmpeg](https://ffmpeg.org/) on your `PATH`
-- (Optional) NVIDIA GPU + drivers for hardware decoding
-- Python packages: see `requirements.txt`
-
-## Setup
+Needs **Python 3.10+** and **[FFmpeg](https://ffmpeg.org/download.html)** on your `PATH`.
 
 ```bash
-git clone <your-repo-url>
-cd cloud-cam-viewer
+pip install "cloudcam[viewer] @ git+https://github.com/Bahrombekk/cloud-cam-viewer"
 
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
+export CLOUDCAM_PLATFORM=hikconnect        # or ezviz
+export CLOUDCAM_EMAIL=you@example.com
+export CLOUDCAM_PASSWORD='your_password'   # Windows: set CLOUDCAM_EMAIL=... etc.
 
-pip install -e .            # also installs the `cloudcam` command
-pip install -e ".[viewer]"  # ...add OpenCV if you want the video window
-
-cp config.example.py config.py     # then edit config.py
-```
-
-Edit `config.py`:
-
-```python
-PLATFORM = "hikconnect"   # or "ezviz"
-EMAIL    = "you@example.com"
-PASSWORD = "your_password"
-```
-
-Credentials can also come from `CLOUDCAM_EMAIL` / `CLOUDCAM_PASSWORD` (or
-`--email` / `--password`) instead of `config.py` — every setting has a
-`CLOUDCAM_*` environment variable.
-
-## Usage
-
-**First run, in order** — skipping step 2 is what produces a grid of black
-tiles reading "Shifr kodi xato":
-
-```bash
-cloudcam cameras                    # 1. what does the account have?
-cloudcam keys                       # 2. fetch the verification codes (see below)
-python app.py                       # 3. view
+cloudcam cameras      # 1. what does the account have?
+cloudcam keys         # 2. fetch verification codes (encrypted cameras need them)
+cloudcam view         # 3. grid viewer: 1–9 fullscreen · g grid · s status · q quit
 ```
 
 ```
 $ cloudcam cameras
-BD7793665  ch1  Aloqa uyi - Ombor
-BD8712447  ch1  Aloqa uyi - Kirish
-BD8712447  ch2  Aloqa uyi - Hovli
-BF1916346  ch1  Omborxona
+BD7793665  ch1  Warehouse
+BD8712447  ch1  Office - Entrance
+BD8712447  ch2  Office - Yard
+BF1916346  ch1  Storage
 ```
 
-Everything else:
+Grab a single frame without a window:
 
 ```bash
-python single.py <SERIAL>           # one camera, fullscreen
-cloudcam snapshot <SERIAL>          # save one JPEG
-cloudcam view                       # grid viewer (needs the `viewer` extra)
+cloudcam snapshot BD8712447 --channel 2 --out yard.jpg
 ```
 
-### Encrypted cameras — get the verification codes
+Or use it from Python, with no config file and no OpenCV needed:
 
-Without a code an encrypted camera shows **"Shifr kodi xato! cam_keys.json ni
-tekshiring"** and a black tile: the stream is AES-encrypted and the verification
+```python
+from cloudcam import CloudCam
+
+cam = CloudCam(email="you@example.com", password="…", platform="hikconnect")
+cam.login()
+stream = cam.open("BD8712447", channel=1)
+for frame in stream.frames():      # numpy BGR arrays
+    ...                            # your detector / recorder here
+```
+
+## How it works
+
+```
+cloud login (session reused) ─▶ device + stream metadata (cached per account)
+  ─▶ cloud VTM relay ─▶ RTP / MPEG-PS / MPEG-TS packets
+  ─▶ AES-decrypt NAL bodies (key = verification code) ─▶ Annex-B over local HTTP
+  ─▶ jitter buffer (paced at the measured frame rate) ─▶ ffmpeg ─▶ frames
+```
+
+Live viewing needs no cloud subscription. The details, with measurements from real
+cameras, are in **[docs/internals.md](docs/internals.md)**.
+
+## Compatibility
+
+What has been verified on real hardware so far. **[Add your camera →](https://github.com/Bahrombekk/cloud-cam-viewer/issues/new?template=camera_compat.yml)**
+
+| Source | Device | Transport / codec | Encryption | Status |
+|---|---|---|---|:---:|
+| Hik-Connect cloud | NVR, multiple channels | RTP · H.265 | all slices encrypted | ✅ |
+| Hik-Connect cloud | IP camera | RTP · H.265 | encrypted | ✅ |
+| Hik-Connect cloud | IP camera | RTP · H.264 | encrypted | ✅ |
+| Hik-Connect cloud | IP camera | MPEG-PS · H.264/H.265 | selective / whole-NAL | ✅ |
+| ISUP 5.0 | DS-TCG406-E, fw V5.4.0 | RTSP via bridge | none | ✅ |
+| EZVIZ cloud | — | — | — | ❔ reports wanted |
+
+## Usage in detail
+
+### Configuration
+
+Every setting can come from a `CLOUDCAM_*` environment variable, a CLI flag
+(`--email`, `--password`, `--platform`) or a `config.py` in the working directory:
+
+```bash
+git clone https://github.com/Bahrombekk/cloud-cam-viewer.git && cd cloud-cam-viewer
+pip install -e ".[viewer]"
+cp config.example.py config.py      # then edit PLATFORM / EMAIL / PASSWORD
+python app.py                       # grid viewer   ·   python single.py <SERIAL>
+```
+
+Set `CLOUDCAM_LANG=uz` for Uzbek messages.
+
+### Encrypted cameras: getting the verification codes
+
+Without a code an encrypted camera shows **"Wrong verification code! Check
+cam_keys.json"** and a black tile: the stream is AES-encrypted and the verification
 code is the key. The cloud knows the codes, so ask it rather than reading them
 off device labels.
 
@@ -118,8 +153,8 @@ emails a 2FA code and stops:
 
 ```
 $ cloudcam keys
-2FA kod b***@gmail.com yuborildi. Qayta ishga tushiring:
-  cloudcam keys --code <KOD>
+2FA code sent to b***@gmail.com. Run again:
+  cloudcam keys --code <CODE>
 ```
 
 Enter that code once. It elevates the session, and every remaining camera is
@@ -136,7 +171,7 @@ Re-running is cheap — codes already stored are not re-fetched:
 
 ```
 $ cloudcam keys
-(3 ta kod allaqachon bor — qayta olish uchun --overwrite)
+(3 codes already stored — use --overwrite to re-fetch)
 ```
 
 A camera that is offline fails on its own without stopping the rest:
@@ -144,7 +179,7 @@ A camera that is offline fails on its own without stopping the rest:
 ```
 $ cloudcam keys
 BD8712447  SCXYKW
-BF1916346  XATO: Qurilma ulanmagan (2009)
+BF1916346  ERROR: Device offline (2009)
 ```
 
 The result is `cam_keys.json` — a flat serial → code map (see
@@ -174,49 +209,20 @@ Codes are the AES key, so they are **case-sensitive** and stored exactly as
 typed. `check_code.py` tries the code as given and, if that is wrong, once more in
 upper case (label codes are upper case; a code changed in the app may not be).
 
-`check_code.py` tells you which case you are in:
+`check_code.py` tells you which case you are in (correct, wrong code, not
+encrypted, or no keyframe yet):
 
 ```
 $ python check_code.py BD8712447 SCXYKW
-🔎 Tekshirilmoqda: BD8712447 ch1 (kod: SCXYKW) ...
-✅ BD8712447 ch1: KOD TO'G'RI! Shifr ochildi.
-   💾 cam_keys.json ga saqlandi: BD8712447 -> SCXYKW
+🔎 Checking: BD8712447 ch1 (code: SCXYKW) ...
+✅ BD8712447 ch1: CODE IS CORRECT! Stream decrypted.
+   💾 Saved to cam_keys.json: BD8712447 -> SCXYKW
 ```
 
-**Controls (in the video window):** `q` quit · `g` grid · `1`–`9` fullscreen camera · `s` status
+**Viewer controls:** `q` quit · `g` grid · `1`–`9` fullscreen camera · `s` status
 
-For an NVR, the verification code is per-device and applies to all its channels.
 
-## Project layout
-
-```
-cloud-cam-viewer/
-├── cloudcam/                # core library (package)
-│   ├── api.py               # high-level facade: CloudCam / Stream / Camera
-│   ├── cli.py               # `cloudcam` command (cameras, keys, snapshot, view)
-│   ├── client.py            # cloud login, session reuse, verification-code fetch
-│   ├── identity.py          # per-install terminal id (featureCode)
-│   ├── isup.py              # ISUP 5.0 bridge client (cloud-free cameras)
-│   ├── keys.py              # verification-code store + cloud fetch (2FA flow)
-│   ├── settings.py          # Settings: config.py / CLOUDCAM_* env / defaults
-│   ├── stream_manager.py    # per-camera processes, reconnect, watchdog, GPU
-│   ├── vtm_cache.py         # account-level metadata cache + channel gate
-│   ├── viewer.py            # OpenCV grid viewer (optional `viewer` extra)
-│   └── decrypt_proxy.py     # RTP/HEVC + MPEG-PS depacketize, AES decrypt, paced output
-├── tests/                   # pytest (cloud is stubbed — no account needed)
-├── app.py                   # main multi-camera viewer (grid / fullscreen)
-├── single.py                # single-camera viewer
-├── set_code.py              # save a verification code
-├── check_code.py            # verify a verification code
-├── config.example.py        # settings template (copy to config.py)
-├── cam_keys.example.json    # verification-code file format
-├── requirements.txt
-├── README.md  ·  LICENSE  ·  .gitignore
-```
-
-> Run all scripts from the project root (`python app.py`, `python check_code.py ...`).
-
-## ISUP 5.0 — cameras that dial out to you
+### ISUP 5.0: cameras that dial out to you
 
 The cloud path works, but it runs on the cloud's terms: 4–14 s to the first
 frame, a cap on how many streams you may open, and occasional corruption. With
@@ -251,9 +257,9 @@ cloudcam isup keys AA1234567=SECRET --no-default
 
 ```
 $ cloudcam isup devices
-AA1234567  10.0.0.8        V5.4.0       kanal:2 onlayn:93s
-    ch1 main jonli  2.5 MB
-    ch2 sub  jim    0.0 MB
+AA1234567  10.0.0.8        V5.4.0       channels:2 online:93s
+    ch1 main live  2.5 MB
+    ch2 sub  idle  0.0 MB
 ```
 
 From Python:
@@ -278,7 +284,7 @@ Point the library at your bridge with `ISUP_URL`, `ISUP_TOKEN` and
 `ISUP_RTSP_BASE` in `config.py` (or `CLOUDCAM_ISUP_*`). Building the bridge
 needs Hikvision's ISUP SDK, which cannot be redistributed.
 
-## Library API
+### Python API
 
 The package works without `config.py` and without OpenCV:
 
@@ -302,117 +308,6 @@ stream.close()
 cam.close()
 ```
 
-## Stream quality & speed (what the code does for you)
-
-These are not knobs you need to tune — they are behaviours worth knowing about,
-each one measured against real cameras:
-
-- **Per-camera encryption auto-detection** — on both the RTP and the MPEG-PS
-  path. Some cameras encrypt only IRAP +
-  parameter sets (inter P/B slices stay clear), others encrypt *everything*.
-  Guessing wrong corrupts every P-frame — the picture recovers on each I-frame
-  and breaks up in between. The decryptor decides from the stream itself using a
-  *structure* test (slice headers repeat, ciphertext is random; measured
-  separation on a real camera: clear **1.00** vs decrypted **0.12**).
-  A/B on the same camera (`BD8712447`, 25 s of live stream, same account,
-  decoded with `ffmpeg -f hevc`):
-
-  | | assumed "inter is clear" | detected |
-  |---|---|---|
-  | decoder errors | **439** (`PPS id out of range`, `PPS changed between slices`) | **0** |
-  | frames decoded | **8** (0.53 s) | **279** (18.6 s) |
-
-  Two more cameras from the same account after the change: HEVC `BF1916346`
-  181 frames / 0 errors, H.264 `BD7793665` 192 frames / 1 error.
-  Only real P/B slices are sampled: SEI/AUD bodies are not slice headers, and a
-  clear SEI mixed into the sample can drag an encrypted camera to a "clear" tie.
-- **Lost RTP fragments do not smear the picture.** A NAL split over several RTP
-  packets (FU) is dropped if a fragment is missing, instead of being glued
-  together — with AES-ECB a missing piece shifts every following 16-byte block,
-  so the rest of the NAL would decode as garbage. Sequence numbers are tracked
-  per **(SSRC, payload type)**: Hik streams carry video (96), metadata (112) and
-  audio (0) in one SSRC, each with its own counter (tracking per SSRC alone
-  reported 706 false gaps in 2318 packets on a live camera; per (SSRC, PT): 0).
-- **The picture starts clean, not grey.** The cloud stream begins mid-GOP and Hik
-  NVRs resend parameter sets periodically, so the first VPS/SPS/PPS is *not*
-  followed by an IDR. Forwarding from there leaves the decoder without reference
-  frames and the viewer watches grey or smeared frames until the next keyframe.
-  Slices before the first IRAP are dropped (parameter sets still pass, the decoder
-  needs them); after 400 slices the gate opens anyway so a camera that never marks
-  an IRAP still shows something.
-- **The encryption decision is remembered per camera.** Whether inter (P/B) slices
-  are encrypted is a fixed property of the camera, but it was re-derived on every
-  open, and output was held back until the decision landed — measured at
-  **0.65–0.85 s** of the time to first frame. It is now cached to disk and the
-  cached answer is still verified in the background, so a firmware change corrects
-  itself instead of silently corrupting the picture.
-- **Jitter buffer.** The cloud does not deliver frames evenly — it sends a whole
-  GOP at once and then goes quiet (measured: 491 of 500 frames arrived <10 ms
-  apart, the remaining 9 gaps were ~2000 ms). Displaying frames on arrival looks
-  like a 2 s freeze followed by fast-forward. `PacedWriter` buffers them *while
-  still compressed* (~0.2 MB per GOP) and releases them at the measured frame
-  rate. This is also why the phone apps look smooth. Measured at the proxy output
-  on a live camera: inter-frame gaps **p50 66 ms, p90 77 ms, max 138 ms, zero
-  gaps under 10 ms and zero over 300 ms** — i.e. no bursts and no stalls.
-  End-to-end through `stream_manager` + ffmpeg the same camera delivers a steady
-  **14.8 fps at 1280×720, 0 reconnects**, first frame in 1.8 s on a warm cache.
-- **The cloud reader is never blocked.** Output goes through a bounded queue on
-  its own thread; if the consumer stalls, whole frames are dropped **at keyframe
-  boundaries** instead of the cloud socket backing up (a blocked socket makes the
-  cloud drop packets, which is what corrupted the picture).
-- **Account-level metadata cache** (`cloudcam/vtm_cache.py`). The device page
-  list and the VTDU token are per *account*, not per camera, yet the library
-  re-fetches them on every open. They are now cached to disk (shared across the
-  per-camera processes, 1 h TTL). Measured on a live account: page list 1.34 s +
-  VTDU token 0.98 s = **2.31 s cold → 0.011 s warm**.
-  The cache is invalidated **only when no packet ever arrived** — a mid-stream
-  blip must not wipe the cache for every other camera on the account.
-- **Channel gate.** An NVR can be online while the channel you asked for does not
-  exist; that stream never starts. The cached page list is checked first, so you
-  get an immediate, clear error instead of a 20 s timeout.
-- **Substream for grids** (`STREAM_MODE = "sub"`). Asks the cloud for the
-  camera's small profile — measured **640×360 at ~0.11 Mbit/s** versus ~4 Mbit/s
-  for the main stream (36× less traffic and CPU) — which is what a grid tile
-  actually needs. Use the main stream for fullscreen.
-- **`STREAM_MODE = "auto"`.** Not every camera has a substream (battery models,
-  some NVR channels): asking for one gets you a black tile. Auto asks for the
-  substream first and falls back to the main stream if nothing arrives within
-  6 s, so a mixed account needs no per-camera configuration.
-- **The session is reused, not re-created.** Logging in on every start is what
-  makes the cloud demand a CAPTCHA (code 1015) or "new device" 2FA — a 24/7
-  process that restarts hits this constantly. The saved session is resumed,
-  refreshed by *age* when stale (not on a fixed hourly timer, which is wrong
-  after sleep/reconnect), and a full login is the last resort; failed logins
-  back off 60 s → 30 min instead of hammering.
-- **Per-install terminal id.** `featureCode` identifies the "terminal" to the
-  cloud, and every copy of this project used to send the *same* hardcoded one —
-  so unrelated users shared one terminal, and one person's activity triggered
-  the other's rate limits. It is now derived from the machine and persisted to
-  `feature_code.txt`, so it is stable across restarts but unique per install.
-
-- **No orphaned processes.** Each camera runs a proxy and an ffmpeg process.
-  They are stopped *and waited for* (no zombies, the port is free for the next
-  start), the proxy is closed as soon as a wrong code is detected, everything is
-  stopped on normal exit, and the decrypting proxy exits by itself when its
-  parent dies — even on `kill -9` — because it watches its stdin pipe for EOF.
-  The verification code reaches the proxy through `CLOUDCAM_CAM_KEY`, not the
-  command line, so it does not show up in the process list.
-
-## Development
-
-```bash
-pip install -e ".[dev]"
-pytest                 # no cloud account needed: the tests stub pyezvizapi
-```
-
-The test suite deliberately guards the failure modes above, including ones that
-are invisible at runtime: `-fflags nobuffer` silently discarding the first
-parameter sets, a cache invalidation losing its guard, the shared hardcoded
-`featureCode` creeping back in, the 2FA code being re-sent per camera instead of
-once per session, or settings not reaching the per-camera child processes,
-the verification code leaking onto the command line, an audio packet between
-video fragments being mistaken for packet loss, or a proxy outliving its parent.
-
 ## Notes & limits
 
 - First frame takes ~7–10s (cloud handshake + waiting for a keyframe) — normal.
@@ -422,13 +317,48 @@ video fragments being mistaken for packet loss, or a proxy outliving its parent.
 - Simultaneous viewing is limited by your CPU/GPU, bandwidth, and the cloud's concurrent-stream limits.
 - `cloudcam keys` needs the account to allow 2FA elevation. Some accounts
   (shared devices, sub-accounts) will not return codes — enter them manually then.
-- Built on [`pyezvizapi`](https://pypi.org/project/pyezvizapi/) for the cloud stream transport.
+
+
+## Roadmap
+
+- **v0.4: `cloudcam serve`.** Every camera becomes a local **RTSP / WebRTC** stream
+  through go2rtc / MediaMTX, with one upstream cloud session shared by any number of
+  viewers. You can then use it as a source in Frigate or Home Assistant, plus a Docker image.
+- **v0.5: reproducible benchmarks.** First-frame p50/p95, recovery after network loss, and CPU per camera.
+- Published on PyPI (`pip install cloudcam`).
+
+⭐ **Star the repo** to follow along, and [open an issue](https://github.com/Bahrombekk/cloud-cam-viewer/issues)
+if your setup needs something else. See [CHANGELOG.md](CHANGELOG.md) for what has shipped.
+
+## Contributing
+
+Compatibility reports, bug reports and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+pip install -e ".[dev]"
+pytest          # no cloud account or network needed
+ruff check .
+```
+
+The test suite guards failure modes that are invisible at runtime, for example:
+- `-fflags nobuffer` silently discarding the first parameter sets;
+- a cache invalidation losing its guard;
+- the 2FA code being re-sent per camera instead of once per session;
+- the verification code leaking onto the command line;
+- an audio packet between video fragments being mistaken for packet loss;
+- a proxy outliving its parent.
+
+Security issues: please report privately, see [SECURITY.md](SECURITY.md).
 
 ## Disclaimer
 
-This is an independent, unofficial project. Use only with cameras and accounts you own or are
-authorized to access. The authors are not affiliated with EZVIZ or Hikvision.
+This is an independent, unofficial project. Use it only with cameras and accounts you
+own or are authorized to access. The authors are not affiliated with EZVIZ or Hikvision.
+The cloud stream transport (`cloudcam/vtm/`) is adapted from
+[`pyezvizapi`](https://github.com/RenierM26/pyEzvizApi) 1.0.5.0 by Renier Moorcroft,
+Apache License 2.0, see [`cloudcam/vtm/LICENSE-pyezvizapi`](cloudcam/vtm/LICENSE-pyezvizapi).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). `cloudcam/vtm/` contains code adapted from `pyezvizapi`
+under the Apache License 2.0 (notice and full text in that directory).

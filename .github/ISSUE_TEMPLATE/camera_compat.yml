@@ -1,0 +1,49 @@
+name: Camera compatibility report
+description: Tell us whether cloudcam works with your camera — it grows the compatibility table.
+title: "[compat] <model> <firmware>"
+labels: [compatibility]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Reports of cameras that **work** are as valuable as failures.
+        ⚠️ Do not paste verification codes or full serials (the first 2 letters are enough).
+  - type: input
+    id: model
+    attributes:
+      label: Camera / NVR model
+      placeholder: DS-2CD1043G2-I, EZVIZ C6N, DS-7608NI-K2 …
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      placeholder: V5.7.3 build 220112
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      options: [Hik-Connect cloud, EZVIZ cloud, ISUP 5.0]
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options: [Works, Partial (explain below), Does not work]
+    validations:
+      required: true
+  - type: checkboxes
+    id: details
+    attributes:
+      label: What did you observe? (check the log / `s` status key)
+      options:
+        - label: Stream is encrypted (verification code needed)
+        - label: H.265 / HEVC
+        - label: Substream works
+        - label: NVR channel(s)
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / errors

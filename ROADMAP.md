@@ -19,10 +19,9 @@ holat-boshqaruvi, observability, xavfsizlik va scalability bilan kuchaytirish.
 
 ### Loyihaning eng katta yashirin xavfi
 
-Yadro `pyezvizapi` ning **ichki** funksiyalarini almashtirish (monkeypatch) ustiga qurilgan —
-5 ta nuqtada, versiya cheklovisiz va hech qanday tekshiruvsiz. Bu reja'dagi boshqa hamma
-narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzishi mumkin
-(§A ga qarang). 71 ta test bor, lekin hech qachon avtomatik ishlamaydi (§B).
+~~Yadro `pyezvizapi` ning **ichki** funksiyalarini almashtirish (monkeypatch) ustiga qurilgan.~~
+**Hal qilindi (v0.3.0):** kerakli transport `cloudcam/vtm/` ga ko'chirildi, `pyezvizapi`
+bog'liqligi olib tashlandi, monkeypatch qolmadi (§A). 71 ta test bor, lekin hech qachon avtomatik ishlamaydi (§B).
 
 ### Prioritet jadval
 
@@ -46,13 +45,13 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
 
 ## A. Upstream bog'liqlik (P0 — yangi, eng yuqori)
 
-- [ ] **`pyezvizapi` versiyasi pinlanmagan** — `pyproject.toml` `dependencies`
+- [x] **`pyezvizapi` versiyasi pinlanmagan** — BAJARILDI v0.3.0, keyin bog'liqlikning o'zi olib tashlandi (kod `cloudcam/vtm/` da, Apache-2.0)
   - Hozir shunchaki `"pyezvizapi"`. Bu **reverse-engineering kutubxonasi**, ya'ni tez-tez
     o'zgaradi. Yangi o'rnatma istalgan versiyani tortadi.
   - Qanday: `pyezvizapi>=1.0.5,<1.1` kabi oraliq; `requirements.txt` da aniq versiya
     (hozir sinalgani — `1.0.5.0`).
 
-- [ ] **5 ta monkeypatch nuqtasi tekshirilmaydi** — `decrypt_proxy.py:86`, `:786`,
+- [x] **5 ta monkeypatch nuqtasi tekshirilmaydi** — BAJARILDI v0.3.0: monkeypatch yo'q, kod `cloudcam/vtm/` da — `decrypt_proxy.py:86`, `:786`,
   `vtm_cache.py:154-187`
   - Loyiha quyidagilarni almashtiradi yoki import qiladi:
     `_cs.get_vtm_page_list`, `_cs.get_vtdu_token_v2`, `_cs.build_vtm_url`,
@@ -62,7 +61,7 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
   - Qanday: `cloudcam/compat.py` — import vaqtida shu 6 ta nomning borligini tekshirib,
     yo'q bo'lsa aniq xabar beradigan xato ("pyezvizapi X.Y bilan mos emas").
 
-- [ ] **`build_vtm_url` patch'i JIM buziladi** — `decrypt_proxy.py:766-791`
+- [x] **`build_vtm_url` patch'i JIM buziladi** — BAJARILDI v0.3.0: `build_vtm_url(stream_type=...)` parametri — `decrypt_proxy.py:766-791`
   - `set_substream` URL'dagi `stream=1` ni regex bilan `stream=2` ga almashtiradi. Upstream
     URL formatini o'zgartirsa (masalan `stream` → `streamType`), regex hech nimani
     o'zgartirmaydi, **xato ham bermaydi** — substream jimgina asosiy oqimga aylanadi va grid
@@ -73,7 +72,7 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
     kirishdan farq qilsinmi) va farq qilmasa `WARNING` bersin. Qo'shimcha: upstream'ning
     haqiqiy `build_vtm_url` chiqishiga qarshi bitta test (pyezvizapi o'rnatilgan bo'lsa).
 
-- [ ] **Import vaqtidagi yon ta'sirlar** — `decrypt_proxy.py:86-87`
+- [x] **Import vaqtidagi yon ta'sirlar** — BAJARILDI v0.3.0: import hech narsani almashtirmaydi — `decrypt_proxy.py:86-87`
   - Modulni import qilishning o'zi upstream'ni global almashtiradi va
     `vtm_cache.install()` ni chaqiradi. Boshqa kod `pyezvizapi` ni to'g'ridan-to'g'ri
     ishlatsa, u bilmagan holda bizning patch'imizni oladi. Testlar ham import tartibiga
@@ -81,7 +80,7 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
   - Qanday: `install_patches()` funksiyasiga ko'chirib, `serve()`/`list_cameras()` dan
     chaqirish (idempotent).
 
-- [ ] **`requirements.txt` ↔ `pyproject.toml` bir-biriga zid**
+- [x] **`requirements.txt` ↔ `pyproject.toml` bir-biriga zid** — BAJARILDI v0.3.0
   - `requirements.txt` da `opencv-python` **majburiy** dep; `pyproject.toml` da esa u
     ixtiyoriy `[viewer]` extra. "Yadro headless" da'vosi requirements orqali buziladi.
   - Qanday: `requirements.txt` ni `-e .[viewer]` ga qisqartirish yoki pyproject bilan
@@ -91,15 +90,15 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
 
 ## B. CI va sifat darvozasi (P0 — yangi)
 
-- [ ] **GitHub Actions yo'q** — `.github/` papkasi mavjud emas
+- [x] **GitHub Actions** — BAJARILDI v0.3.0 (`.github/workflows/ci.yml`)
   - 71 ta test bor, lekin push/PR da hech qachon ishlamaydi. Manba matnini qo'riqlaydigan
     testlar (`nobuffer`, featureCode, `_fail_open`) aynan **eslab qolish qiyin** narsalarni
     qo'riqlaydi — ular avtomatik ishlamasa, ma'nosi yarmiga tushadi.
   - Qanday: `.github/workflows/ci.yml` — Python 3.10/3.12, `pip install -e ".[dev]"`,
-    `pytest`, `ruff check`. `pyezvizapi` stub bilan ishlagani uchun bulut hisobi shart emas.
-- [ ] **Tavsiya:** matritsaga Windows + Linux qo'shish — loyihada Windows'ga xos yo'llar bor
+    `pytest`, `ruff check`. Bulut testlarda soxta — hisob shart emas.
+- [x] **Tavsiya:** matritsaga Windows + Linux qo'shish — loyihada Windows'ga xos yo'llar bor
   (`venv/Scripts/python.exe`, `stream_manager.py:95`).
-- [ ] `ruff` konfiguratsiyasi bor, lekin hech qachon ishlatilmagan (venv'da o'rnatilmagan).
+- [x] `ruff` — BAJARILDI v0.3.0 (E/F/W toza, CI da ishlaydi)
 
 ---
 

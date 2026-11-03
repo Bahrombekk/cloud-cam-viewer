@@ -207,7 +207,7 @@ def test_bridge_reports_unparsed_key_lines(bridge, monkeypatch):
         return {"ok": True, "bad": 2}
 
     monkeypatch.setattr(b, "_call", _bad)
-    with pytest.raises(IsupError, match="2 ta kalit"):
+    with pytest.raises(IsupError, match="could not parse 2 key"):
         b.set_keys({"AA1": "K"})
 
 
@@ -234,7 +234,7 @@ def test_token_is_sent_and_enforced():
 def test_a_missing_bridge_says_so_clearly():
     """Ko'prik ixtiyoriy tashqi bog'liqlik — yo'qligi tushunarli bo'lsin."""
     b = IsupBridge("http://127.0.0.1:1", timeout=0.3)
-    with pytest.raises(IsupUnavailable, match="javob bermadi"):
+    with pytest.raises(IsupUnavailable, match="did not respond"):
         b.devices()
     assert b.health() is False, "health() xato ko'tarmasligi kerak"
 

@@ -13,12 +13,14 @@ import sys
 
 import config
 from cloudcam import keys as _keys
+from cloudcam.i18n import t
 
 
 def main():
     args = sys.argv[1:]
     if len(args) < 2 or len(args) % 2 != 0:
-        print("Foydalanish: python set_code.py <SERIAL> <CODE> [<SERIAL> <CODE> ...]")
+        print(t("Usage", "Foydalanish")
+              + ": python set_code.py <SERIAL> <CODE> [<SERIAL> <CODE> ...]")
         return
 
     # Kutubxonaning o'zi orqali: fayl 0600 bilan atomar yoziladi ([[cloudcam.keys]]).
@@ -33,8 +35,9 @@ def main():
         print(f"✅ {serial} -> {code}")
 
     _keys.save(keys, config.CAMKEY_FILE)
-    print(f"\n💾 {config.CAMKEY_FILE} saqlandi: {list(keys)}")
-    print("➡️  Endi: python app.py")
+    print(t(f"\n💾 Saved {config.CAMKEY_FILE}: {list(keys)}",
+            f"\n💾 {config.CAMKEY_FILE} saqlandi: {list(keys)}"))
+    print("➡️  " + t("Next: python app.py", "Endi: python app.py"))
 
 
 if __name__ == "__main__":

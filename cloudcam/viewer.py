@@ -11,6 +11,7 @@ import time
 import cv2
 import numpy as np
 
+from .i18n import t
 from .settings import get_active
 
 
@@ -29,7 +30,10 @@ def _grid(frames, labels, statuses):
         cell = frames[i] if (i < n and frames[i] is not None) else blank.copy()
         if i < n and frames[i] is None:
             err = statuses[i].get("error")
-            msg, color = (err, (0, 0, 255)) if err else ("Ulanmoqda...", (0, 200, 255))
+            if err:
+                msg, color = err, (0, 0, 255)
+            else:
+                msg, color = t("Connecting...", "Ulanmoqda..."), (0, 200, 255)
             cv2.putText(cell, msg[:40], (10, h // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
         if i < n:
@@ -56,11 +60,12 @@ def run(cam, args=None) -> int:
     cam.start_token_refresh(interval=3600)
     cams = cam.cameras()
     if not cams:
-        print("Kamera topilmadi.")
+        print(t("No cameras found.", "Kamera topilmadi."))
         return 1
     streams = [cam.open(c.serial, channel=c.channel) for c in cams]
     labels = [c.name[:22] for c in cams]
-    print(f"{len(streams)} kamera · q=chiqish · g=grid · 1-9=to'liq · s=holat")
+    print(t(f"{len(streams)} cameras · q=quit · g=grid · 1-9=fullscreen · s=status",
+            f"{len(streams)} kamera · q=chiqish · g=grid · 1-9=to'liq · s=holat"))
 
     win = "cloudcam"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)

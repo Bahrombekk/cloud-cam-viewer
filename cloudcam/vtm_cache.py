@@ -27,6 +27,7 @@ import time
 from typing import Any
 
 from .settings import get_active
+from .vtm import cloud as _cloud
 
 TTL_SECONDS = 3600.0            # kesh amal qilish muddati
 _ENV_TTL = "CLOUDCAM_VTM_TTL"
@@ -151,18 +152,16 @@ def channel_missing(key: str, serial: str, channel: int) -> bool:
     if not real:
         return False
     return channel not in have
-# ---- pyezvizapi'ni kesh bilan o'rash --------------------------------------
+# ---- Keshlangan metama'lumot ----------------------------------------------
 #
-# O'ram BIR MARTA o'rnatiladi va hisob kalitini MIJOZ obyektidan o'qiydi
-# ([[tag]]). Ilgari har `install()` (boshqa hisob bilan) o'ramni QAYTA qo'yar va
-# kalitni closure'dan olardi — bir jarayonda ikki hisob bo'lsa o'ramlar
-# ZANJIRLANARDI: B ning keshi bo'sh -> ichki = A ning o'rami -> A keshi to'la ->
-# A ning qurilmalari qaytadi -> B keshiga YOZILADI. central-server'da jonli
-# o'lchangan: 4 hisobdan 3 tasida bir xil ro'yxat yotardi va o'z hisobida yo'q
-# kameralar "oflayn" ko'rinardi.
+# Hisob kaliti MIJOZ obyektidan o'qiladi ([[tag]]), closure'dan emas. Ilgari
+# kesh kutubxona funksiyalari ustiga o'ram sifatida qo'yilardi va har
+# `install()` (boshqa hisob bilan) o'ramni QAYTA qo'yib ZANJIRLARDI: B ning keshi
+# bo'sh -> ichki = A ning o'rami -> A ning qurilmalari B keshiga yozilardi
+# (central-server'da jonli o'lchangan). Endi o'ram yo'q — [[pagelist]] /
+# [[vtdu]] oddiy funksiyalar, zanjir paydo bo'la olmaydi.
 
 _KEY_ATTR = "_cloudcam_cache_key"
-_WRAPPED_ATTR = "_cloudcam_wrapped"
 
 _tls = threading.local()
 
@@ -171,8 +170,8 @@ _tls = threading.local()
 def bypass_read():
     """Shu THREAD ichida [[load]] doim None qaytaradi — kesh O'QILMAYDI.
 
-    Keshni yangilash uchun: o'ram hali yaroqli eski qiymatni qaytarmasin, bulutga
-    borsin. Ilgari buning o'rniga `invalidate()` qilinardi — bulut xato bersa
+    Keshni yangilash uchun: hali yaroqli eski qiymat qaytmasin, bulutga
+    borilsin. Ilgari buning o'rniga `invalidate()` qilinardi — bulut xato bersa
     (504) kesh BO'SH qolar va o'sha hisobdagi har kamera ~6s ortiq ochilardi.
     Endi kesh FAQAT muvaffaqiyatli javob bilan almashadi."""
     prev = getattr(_tls, "bypass", False)
@@ -184,7 +183,7 @@ def bypass_read():
 
 
 def tag(client: Any, token_file: str | None = None) -> str:
-    """Mijozni hisob kaliti bilan belgilaydi (o'ram shu kalitda keshlaydi)."""
+    """Mijozni hisob kaliti bilan belgilaydi (kesh shu kalitda yuritiladi)."""
     key = account_key(token_file)
     try:
         setattr(client, _KEY_ATTR, key)
@@ -193,49 +192,28 @@ def tag(client: Any, token_file: str | None = None) -> str:
     return key
 
 
-def install(token_file: str | None = None) -> str:
-    """`get_vtm_page_list` va `get_vtdu_token_v2` ustiga keshni o'rnatadi.
+def _through(client: Any, kind: str, fetch) -> Any:
+    """Keshdan, bo'lmasa bulutdan (va keshga yozib). Belgilanmagan ([[tag]])
+    mijoz keshsiz o'tadi — noma'lum hisobni boshqa hisob keshiga yozishdan ko'ra."""
+    k = getattr(client, _KEY_ATTR, None)
+    if not k:
+        return fetch(client)
+    hit = load(k, kind)
+    if hit is not None:
+        return hit
+    data = fetch(client)
+    store(k, kind, data)
+    return data
 
-    Sahifalovchi patch USTIGA qo'yiladi — kesh bo'sh bo'lsa baribir TO'LIQ
-    (ko'p sahifali) ro'yxat olinadi. Belgilanmagan ([[tag]]) mijoz keshsiz
-    o'tadi — noma'lum hisobni boshqa hisob keshiga yozishdan ko'ra yaxshi.
-    Qaytaradi: hisob kaliti (invalidate uchun).
-    """
-    import pyezvizapi.cloud_stream as _cs
 
-    key = account_key(token_file)
-    if getattr(_cs.get_vtm_page_list, _WRAPPED_ATTR, False):
-        return key                            # o'ram allaqachon bor (bitta)
-    inner_pagelist = _cs.get_vtm_page_list
-    inner_vtdu = _cs.get_vtdu_token_v2
+def pagelist(client: Any) -> dict:
+    """VTM pagelist (TO'LIQ, barcha sahifalar) — hisob keshi orqali."""
+    return _through(client, "pagelist", _cloud.fetch_vtm_page_list)
 
-    def _cached_pagelist(client):
-        k = getattr(client, _KEY_ATTR, None)
-        if not k:
-            return inner_pagelist(client)
-        hit = load(k, "pagelist")
-        if hit is not None:
-            return hit
-        data = inner_pagelist(client)
-        store(k, "pagelist", data)
-        return data
 
-    def _cached_vtdu(client, *a, **kw):
-        k = getattr(client, _KEY_ATTR, None)
-        if not k:
-            return inner_vtdu(client, *a, **kw)
-        hit = load(k, "vtdu")
-        if hit is not None:
-            return hit
-        data = inner_vtdu(client, *a, **kw)
-        store(k, "vtdu", data)
-        return data
-
-    setattr(_cached_pagelist, _WRAPPED_ATTR, True)
-    setattr(_cached_vtdu, _WRAPPED_ATTR, True)
-    _cs.get_vtm_page_list = _cached_pagelist
-    _cs.get_vtdu_token_v2 = _cached_vtdu
-    return key
+def vtdu(client: Any) -> dict:
+    """VTDU oqim tokenlari — hisob keshi orqali."""
+    return _through(client, "vtdu", _cloud.fetch_vtdu_token)
 
 
 # ---- Keshni yangilash (o'chirmasdan) --------------------------------------
@@ -248,14 +226,12 @@ def refresh(client: Any, kinds: tuple[str, ...] = ("pagelist", "vtdu")) -> bool:
 
     Oqim ochilmaganda keshni o'chirish (`invalidate`) o'rniga shu: VTDU tokeni
     eskirgan bo'lsa yangisi yoziladi, bulut xato bersa eski kesh joyida qoladi."""
-    import pyezvizapi.cloud_stream as _cs
-
     try:
         with bypass_read():
             if "pagelist" in kinds:
-                _cs.get_vtm_page_list(client)
+                pagelist(client)
             if "vtdu" in kinds:
-                _cs.get_vtdu_token_v2(client)
+                vtdu(client)
         return True
     except Exception:  # noqa: BLE001 — "best effort"
         return False

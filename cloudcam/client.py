@@ -24,6 +24,7 @@ import time
 import requests
 
 from .fsutil import harden, write_private
+from .i18n import t
 from .identity import feature_code
 
 
@@ -53,7 +54,8 @@ def safe_domain(domain) -> str:
         d = d[len("https://"):]
     d = d.rstrip("/")
     if not _DOMAIN_RE.match(d):
-        raise UnsafeDomain(f"Ruxsat etilmagan bulut domeni: {domain!r}")
+        raise UnsafeDomain(t(f"Cloud domain not allowed: {domain!r}",
+                              f"Ruxsat etilmagan bulut domeni: {domain!r}"))
     return d
 
 
@@ -132,9 +134,10 @@ class CloudClient:
         24/7 sikl esa aks holda bir soniyada bir marta urinaverardi."""
         wait = self._login_fail_at + self._login_backoff - time.time()
         if wait > 0:
-            raise RuntimeError(
+            raise RuntimeError(t(
+                f"Login will be retried in {wait:.0f}s (previous attempt failed)",
                 f"Login {wait:.0f}s dan keyin qayta urinib ko'riladi "
-                f"(oldingi urinish muvaffaqiyatsiz)")
+                f"(oldingi urinish muvaffaqiyatsiz)"))
         try:
             data = (self._login_ezviz() if self.platform == "ezviz"
                     else self._login_hikconnect())
@@ -167,10 +170,12 @@ class CloudClient:
                 self.api_url = safe_domain(data["loginArea"]["apiDomain"])
                 continue
             if code in (1013, 1014, 1226):
-                raise RuntimeError("Login xatosi: email yoki parol noto'g'ri")
+                raise RuntimeError(t("Login failed: wrong email or password",
+                                     "Login xatosi: email yoki parol noto'g'ri"))
             if code == 1015:
-                raise RuntimeError(
-                    "CAPTCHA so'raldi — avval Hik-Connect ilovasiga kiring, keyin qayta urining")
+                raise RuntimeError(t(
+                    "CAPTCHA requested — log in to the Hik-Connect app first, then retry",
+                    "CAPTCHA so'raldi — avval Hik-Connect ilovasiga kiring, keyin qayta urining"))
             break
         return self._finish_login(data)
 
@@ -191,7 +196,8 @@ class CloudClient:
 
     def _finish_login(self, data):
         if not data or data.get("meta", {}).get("code") != 200:
-            raise RuntimeError(f"Login xatosi: {data.get('meta') if data else 'javob yo`q'}")
+            meta = data.get("meta") if data else t("no response", "javob yo`q")
+            raise RuntimeError(t(f"Login failed: {meta}", f"Login xatosi: {meta}"))
         self.session_id = data["loginSession"]["sessionId"]
         self.rf_session_id = data["loginSession"]["rfSessionId"]
         self.api_url = safe_domain(data.get("loginArea", {}).get("apiDomain", self.api_url))
@@ -299,7 +305,8 @@ class CloudClient:
             pass
         # Refresh ishlamasa — to'liq qayta login
         if not allow_login:
-            raise RuntimeError("Sessiyani yangilab bo'lmadi (refresh token eskirgan)")
+            raise RuntimeError(t("Could not refresh the session (refresh token expired)",
+                                 "Sessiyani yangilab bo'lmadi (refresh token eskirgan)"))
         self.login()
         return True
 
@@ -385,13 +392,16 @@ class CloudClient:
         if code == "0":
             return data.get("encryptkey")
         if code == "20002":
-            raise MfaRequired("2FA kod kerak (resultCode 20002)")
+            raise MfaRequired(t("2FA code required (resultCode 20002)",
+                                "2FA kod kerak (resultCode 20002)"))
         if code == "10001":
-            raise RuntimeError("Takroriy so'rov — 1-2 daqiqa kutib qayta urining (10001)")
+            raise RuntimeError(t("Repeated request — wait 1-2 minutes and retry (10001)",
+                                 "Takroriy so'rov — 1-2 daqiqa kutib qayta urining (10001)"))
         if code == "2009":
-            raise RuntimeError("Qurilma ulanmagan (2009)")
+            raise RuntimeError(t("Device offline (2009)", "Qurilma ulanmagan (2009)"))
         # Xitoycha resultDes konsolda crash bermasligi uchun faqat kod ko'rsatamiz
-        raise RuntimeError(f"Kalitni ololmadim (resultCode {code})")
+        raise RuntimeError(t(f"Could not get the key (resultCode {code})",
+                             f"Kalitni ololmadim (resultCode {code})"))
 
     # ── tasdiqlash kodi (verification code) ──────────────────────────────
     def send_verification_2fa(self, biz_type="DEVICE_AUTH_CODE"):
@@ -432,10 +442,12 @@ class CloudClient:
         if code == 200 and data.get("devAuthCode"):
             return str(data["devAuthCode"]).strip().upper()
         if code == 80000:
-            raise MfaRequired("2FA kod kerak (meta.code 80000)")
+            raise MfaRequired(t("2FA code required (meta.code 80000)",
+                                "2FA kod kerak (meta.code 80000)"))
         if code == 2009:
-            raise RuntimeError("Qurilma ulanmagan (2009)")
-        raise RuntimeError(f"Tasdiqlash kodini ololmadim (meta.code {code})")
+            raise RuntimeError(t("Device offline (2009)", "Qurilma ulanmagan (2009)"))
+        raise RuntimeError(t(f"Could not get the verification code (meta.code {code})",
+                             f"Tasdiqlash kodini ololmadim (meta.code {code})"))
 
     def save_token(self, path="ezviz_token.json"):
         """Sessiyani diskka yozadi — keyingi ishga tushirish login QILMAYDI.

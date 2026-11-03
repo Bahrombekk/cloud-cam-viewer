@@ -3,7 +3,6 @@ import itertools
 
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy
 from cloudcam.decrypt_proxy import HevcRtpDecryptor, PsStreamDecryptor
 
 KEY = "ABCDEF"

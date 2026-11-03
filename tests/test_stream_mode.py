@@ -19,6 +19,7 @@ import urllib.request
 import pytest
 
 from cloudcam import decrypt_proxy, vtm_cache
+from cloudcam.vtm import STREAM_SUB
 
 
 def _free_port() -> int:
@@ -92,9 +93,16 @@ def proxy(monkeypatch):
     monkeypatch.setattr(decrypt_proxy, "_make_client", lambda: object())
     monkeypatch.setattr(vtm_cache, "channel_missing", lambda *a, **k: False)
 
+    asked = []          # har ochilishda: substream so'raldimi (stream_type)
+
     def _run(mode, opener):
         port = _free_port()
-        monkeypatch.setattr(decrypt_proxy, "open_cloud_stream", opener)
+
+        def _open(*a, **k):
+            asked.append(k.get("stream_type") == STREAM_SUB)
+            return opener(*a, **k)
+
+        monkeypatch.setattr(decrypt_proxy, "open_cloud_stream", _open)
         t = threading.Thread(
             target=decrypt_proxy.serve,
             args=("S1", port, "AUTO", 1), kwargs={"stream_mode": mode},
@@ -112,6 +120,7 @@ def proxy(monkeypatch):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/S1.ts", timeout=10) as r:
             return r.read()
 
+    _run.asked = asked
     yield _run
     for srv in servers:
         srv.shutdown()
@@ -119,8 +128,7 @@ def proxy(monkeypatch):
 
 
 def test_main_mode_asks_for_the_main_stream(proxy, monkeypatch):
-    asked = []
-    monkeypatch.setattr(decrypt_proxy, "set_substream", lambda v: asked.append(v))
+    asked = proxy.asked
     cms = [FakeCm(PACKETS)]
     body = proxy("main", lambda *a, **k: cms[0])
     assert asked == [False], "main rejimda substream so'ralmasligi kerak"
@@ -129,15 +137,13 @@ def test_main_mode_asks_for_the_main_stream(proxy, monkeypatch):
 
 
 def test_sub_mode_asks_for_the_substream(proxy, monkeypatch):
-    asked = []
-    monkeypatch.setattr(decrypt_proxy, "set_substream", lambda v: asked.append(v))
+    asked = proxy.asked
     proxy("sub", lambda *a, **k: FakeCm(PACKETS))
     assert asked == [True]
 
 
 def test_auto_uses_the_substream_when_it_delivers(proxy, monkeypatch):
-    asked = []
-    monkeypatch.setattr(decrypt_proxy, "set_substream", lambda v: asked.append(v))
+    asked = proxy.asked
     body = proxy("auto", lambda *a, **k: FakeCm(PACKETS))
     assert asked == [True], "substream ishlaganda asosiysiga o'tilmasligi kerak"
     assert body
@@ -146,8 +152,7 @@ def test_auto_uses_the_substream_when_it_delivers(proxy, monkeypatch):
 def test_auto_falls_back_to_the_main_stream_when_the_substream_is_silent(
         proxy, monkeypatch):
     """Substream'i yo'q kamera: jim qoladi -> asosiy oqimga o'tiladi."""
-    asked = []
-    monkeypatch.setattr(decrypt_proxy, "set_substream", lambda v: asked.append(v))
+    asked = proxy.asked
     made = []
 
     def _open(*a, **k):
@@ -163,8 +168,7 @@ def test_auto_falls_back_to_the_main_stream_when_the_substream_is_silent(
 
 def test_auto_falls_back_when_opening_the_substream_raises(proxy, monkeypatch):
     """Bulut substream uchun umuman resurs bermasa ham asosiysi sinaladi."""
-    asked = []
-    monkeypatch.setattr(decrypt_proxy, "set_substream", lambda v: asked.append(v))
+    asked = proxy.asked
     calls = []
 
     def _open(*a, **k):
