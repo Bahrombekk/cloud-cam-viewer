@@ -18,6 +18,7 @@ import os
 from dataclasses import dataclass, field
 
 from .client import MfaRequired
+from .fsutil import harden, write_private
 from .settings import get_active
 
 
@@ -30,6 +31,7 @@ def load(path: str | None = None) -> dict[str, str]:
     p = _path(path)
     if not os.path.exists(p):
         return {}
+    harden(p)                   # eski versiya 0644 bilan yozgan bo'lishi mumkin
     try:
         with open(p, encoding="utf-8") as f:
             data = json.load(f)
@@ -39,12 +41,8 @@ def load(path: str | None = None) -> dict[str, str]:
 
 
 def save(keys: dict[str, str], path: str | None = None) -> None:
-    """Kodlarni ATOMAR yozadi (yozish paytida uzilsa eski fayl buzilmasin)."""
-    p = _path(path)
-    tmp = f"{p}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(keys, f, indent=2, sort_keys=True)
-    os.replace(tmp, p)
+    """Kodlarni ATOMAR va 0600 bilan yozadi — kod = oqimning AES kaliti."""
+    write_private(_path(path), json.dumps(keys, indent=2, sort_keys=True))
 
 
 def set_code(serial: str, code: str, path: str | None = None) -> dict[str, str]:

@@ -9,11 +9,10 @@ Ishga tushirish:
     python set_code.py BD8712447 SCXYKW BD8712513 ABCDEF   # bir nechta (juft-juft)
 """
 
-import json
-import os
 import sys
 
 import config
+from cloudcam import keys as _keys
 
 
 def main():
@@ -22,13 +21,8 @@ def main():
         print("Foydalanish: python set_code.py <SERIAL> <CODE> [<SERIAL> <CODE> ...]")
         return
 
-    keys = {}
-    if os.path.exists(config.CAMKEY_FILE):
-        try:
-            with open(config.CAMKEY_FILE) as f:
-                keys = json.load(f)
-        except Exception:
-            pass
+    # Kutubxonaning o'zi orqali: fayl 0600 bilan atomar yoziladi ([[cloudcam.keys]]).
+    keys = _keys.load(config.CAMKEY_FILE)
 
     for i in range(0, len(args), 2):
         # Registr O'ZGARTIRILMAYDI: kod = AES kalit (registrga sezgir), ilovada
@@ -38,8 +32,7 @@ def main():
         keys[serial] = code
         print(f"✅ {serial} -> {code}")
 
-    with open(config.CAMKEY_FILE, "w") as f:
-        json.dump(keys, f, indent=2)
+    _keys.save(keys, config.CAMKEY_FILE)
     print(f"\n💾 {config.CAMKEY_FILE} saqlandi: {list(keys)}")
     print("➡️  Endi: python app.py")
 

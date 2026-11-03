@@ -73,9 +73,8 @@ def feature_code() -> str:
         pass
     code = _from_mac()
     try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(code)
+        from .fsutil import write_private
+        write_private(path, code)       # terminal kodi — 0600 ([[fsutil]])
     except OSError:
         pass            # yozolmasak ham ishlayveramiz — MAC baribir barqaror
     _cached = code

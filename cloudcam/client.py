@@ -23,6 +23,7 @@ import time
 
 import requests
 
+from .fsutil import harden, write_private
 from .identity import feature_code
 
 
@@ -206,6 +207,7 @@ class CloudClient:
         Qaytaradi: tiklandimi. Terminal kodi boshqa bo'lsa (token boshqa
         kompyuterdan ko'chirilgan) tiklamaymiz — bulut baribir rad etadi."""
         path = path or self._default_token_file()
+        harden(path)                    # eski versiya 0644 bilan yozgan bo'lishi mumkin
         try:
             with open(path, encoding="utf-8") as f:
                 tok = json.load(f)
@@ -439,17 +441,17 @@ class CloudClient:
         """Sessiyani diskka yozadi — keyingi ishga tushirish login QILMAYDI.
 
         `feature_code` ham yoziladi: token boshqa kompyuterga ko'chirilsa
-        [[load_token]] uni rad etadi (bulut baribir qabul qilmaydi)."""
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({
-                "session_id": self.session_id,
-                "rf_session_id": self.rf_session_id,
-                "username": self.email,
-                "api_url": self.api_url,
-                "platform": self.platform,
-                "feature_code": self.FEATURE_CODE,
-                # Haqiqiy yosh yoziladi: noma'lum (0) bo'lsa `connect()`
-                # yangilaydi. `time.time()` qo'yilsa sessiya "yangi" ko'rinib,
-                # eskirgan holda ishlatilardi.
-                "session_time": self.session_time,
-            }, f)
+        [[load_token]] uni rad etadi (bulut baribir qabul qilmaydi).
+        Fayl 0600 bilan atomar yoziladi ([[fsutil.write_private]])."""
+        write_private(path, json.dumps({
+            "session_id": self.session_id,
+            "rf_session_id": self.rf_session_id,
+            "username": self.email,
+            "api_url": self.api_url,
+            "platform": self.platform,
+            "feature_code": self.FEATURE_CODE,
+            # Haqiqiy yosh yoziladi: noma'lum (0) bo'lsa `connect()`
+            # yangilaydi. `time.time()` qo'yilsa sessiya "yangi" ko'rinib,
+            # eskirgan holda ishlatilardi.
+            "session_time": self.session_time,
+        }))

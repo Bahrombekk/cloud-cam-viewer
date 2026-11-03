@@ -354,8 +354,13 @@ kerak emas. `central-server` ning prod o'lchovi (2026-09-30, DS-TCG406-E):
 
 - [x] Parol bola-jarayonga uzatilmaydi (`settings.py` `_ENV_EXCLUDE`); sirlar `.gitignore`da;
   proxy `127.0.0.1` ga bog'lanadi; token `feature_code` ga bog'langan.
-- [ ] `cam_keys.json` / `token.json` plain-text — **fayl ruxsatlarini** qattiqlash (0600).
-  Bir foydalanuvchili self-hosted'da ko'pincha yetarli.
+- [x] `cam_keys.json` / `token.json` / `feature_code` — **0600, atomar** (`fsutil.write_private`);
+  eski 0644 fayllar o'qishda tuzatiladi (`fsutil.harden`). Windows'da POSIX huquqlari
+  yo'q — u yerda foydalanuvchi profili ACL'i himoya qiladi. Fayllar hali plain-text:
+  keyring/DPAPI quyida.
+- [x] **Bulut domeni tekshiriladi** (`client.safe_domain`): md5(parol) va `sessionId`
+  faqat EZVIZ/Hik-Connect domenlariga ketadi — sozlama, login javobi (1100 redirect)
+  va `token.json` dagi `api_url` uchun ham; buzilgan token tiklanmaydi.
 - [ ] **Vaqtinchalik bayroq fayllari to'qnashadi** — `decrypt_proxy.py:116-123`
   - `%TEMP%/ezviz_keyerr_<serial>_<ch>.flag` — **umumiy** temp papkada, foydalanuvchi yoki
     hisob ajratmasdan. Bitta hostda ikki hisob bir xil seriyani ochsa, bir-birining
