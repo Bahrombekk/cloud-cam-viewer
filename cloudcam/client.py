@@ -17,6 +17,7 @@ o'zini oqlagan (`ezviz-ha-addon`, `hikconnect`, `pyezvizapi`):
 """
 
 import hashlib
+import re
 import json
 import time
 
@@ -27,6 +28,32 @@ from .identity import feature_code
 
 def md5(text: str) -> str:
     return hashlib.md5(text.encode()).hexdigest()
+
+
+# Login md5(parol) ni, keyingi so'rovlar esa `sessionId` ni shu domenga yuboradi.
+# Domen uch joydan keladi — sozlama (`region`), bulut javobi (`loginArea.apiDomain`,
+# 1100 redirect) va `token.json` — va ilgari hech biri tekshirilmasdi: token fayli
+# o'zgartirilsa, parol xeshi va sessiya begona serverga ketardi. Faqat EZVIZ /
+# Hik-Connect bulut domenlari (central-server bilan bir xil ro'yxat).
+_DOMAIN_RE = re.compile(
+    r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.(ezvizlife\.com|ezviz\.com|hik-connect\.com"
+    r"|hik-connectru\.com|hikvision\.com)\Z"
+)
+
+
+class UnsafeDomain(ValueError):
+    """Bulut domeni ruxsat etilgan ro'yxatda yo'q."""
+
+
+def safe_domain(domain) -> str:
+    """Domenni tekshirib, normallashtirilgan holda qaytaradi; aks holda [[UnsafeDomain]]."""
+    d = str(domain or "").strip().lower()
+    if d.startswith("https://"):
+        d = d[len("https://"):]
+    d = d.rstrip("/")
+    if not _DOMAIN_RE.match(d):
+        raise UnsafeDomain(f"Ruxsat etilmagan bulut domeni: {domain!r}")
+    return d
 
 
 class MfaRequired(Exception):
@@ -57,7 +84,7 @@ class CloudClient:
         self.platform = platform if platform in self.PLATFORMS else "hikconnect"
         cfg = self.PLATFORMS[self.platform]
         # region berilgan bo'lsa uni, aks holda platforma standartini ishlatamiz
-        self.api_url = region or cfg["domain"]
+        self.api_url = safe_domain(region or cfg["domain"])
         self.session_id = None
         self.rf_session_id = None
         self.user_code = None
@@ -136,7 +163,7 @@ class CloudClient:
             data = r.json()
             code = data.get("meta", {}).get("code")
             if code == 1100:  # boshqa regionga yo'naltirish
-                self.api_url = data["loginArea"]["apiDomain"]
+                self.api_url = safe_domain(data["loginArea"]["apiDomain"])
                 continue
             if code in (1013, 1014, 1226):
                 raise RuntimeError("Login xatosi: email yoki parol noto'g'ri")
@@ -166,7 +193,7 @@ class CloudClient:
             raise RuntimeError(f"Login xatosi: {data.get('meta') if data else 'javob yo`q'}")
         self.session_id = data["loginSession"]["sessionId"]
         self.rf_session_id = data["loginSession"]["rfSessionId"]
-        self.api_url = data.get("loginArea", {}).get("apiDomain", self.api_url)
+        self.api_url = safe_domain(data.get("loginArea", {}).get("apiDomain", self.api_url))
         self.user_code = data.get("loginUser", {}).get("userCode")
         self.session.headers.update({"sessionId": self.session_id})
         self.session_time = time.time()
@@ -189,9 +216,15 @@ class CloudClient:
         saved_fc = tok.get("feature_code")
         if saved_fc and saved_fc != self.FEATURE_CODE:
             return False
+        try:
+            # Sessiya shu domenga yuboriladi — token fayli begona hostga ishora
+            # qilsa TIKLAMAYMIZ (parol bilan qayta kirish xavfsiz domenga boradi).
+            safe_domain(tok.get("api_url") or self.api_url)
+        except UnsafeDomain:
+            return False
         self.session_id = tok["session_id"]
         self.rf_session_id = tok.get("rf_session_id")
-        self.api_url = tok.get("api_url") or self.api_url
+        self.api_url = safe_domain(tok.get("api_url") or self.api_url)
         self.email = tok.get("username") or self.email
         if tok.get("platform") in self.PLATFORMS:
             self.platform = tok["platform"]

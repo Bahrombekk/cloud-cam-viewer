@@ -38,6 +38,7 @@ from pyezvizapi.cloud_stream import open_cloud_stream
 from pyezvizapi.stream import rtp_payload
 
 from . import vtm_cache
+from .client import safe_domain
 from .identity import feature_code
 from .settings import get_active
 
@@ -996,6 +997,9 @@ def _make_client():
     import re
     with open(get_active().token_file, encoding="utf-8") as f:
         token = json.load(f)
+    # Pagelist va qurilma nomlari so'rovlari `sessionId` ni shu domenga yuboradi —
+    # token fayli begona hostga ishora qilsa ishlamaymiz ([[client.safe_domain]]).
+    token["api_url"] = safe_domain(token.get("api_url"))
     client = EzvizClient(token.get("username"), None, token.get("api_url"), token=token)
     # Klient turi — busiz pagelist hamma resurslarni qaytarmaydi (platformaga qarab)
     try:
