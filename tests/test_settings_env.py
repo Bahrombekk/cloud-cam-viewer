@@ -13,9 +13,11 @@ jarayonlar ro'yxatidan ko'rinadi.
 import re
 from pathlib import Path
 
+import cloudcam
 from cloudcam.settings import Settings
 
-MGR = Path(__file__).resolve().parents[1] / "cloudcam" / "stream_manager.py"
+PKG = Path(cloudcam.__file__).resolve().parent
+MGR = PKG / "stream_manager.py"
 
 
 def test_every_field_survives_the_round_trip(monkeypatch):

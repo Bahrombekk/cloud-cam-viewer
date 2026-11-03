@@ -9,9 +9,8 @@ import socket
 
 import pytest
 
-from cloudcam.vtm import cloud, protocol as P
-from cloudcam.vtm import DeviceOffline, VtmError
-
+from cloudcam.vtm import DeviceOffline, VtmError, cloud
+from cloudcam.vtm import protocol as P
 
 # ---- freymlash / protobuf ------------------------------------------------
 

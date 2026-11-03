@@ -12,6 +12,7 @@ Ishga tushirish:
 import sys
 
 import config
+
 from cloudcam import keys as _keys
 from cloudcam.i18n import t
 

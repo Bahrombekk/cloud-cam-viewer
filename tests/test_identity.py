@@ -10,12 +10,15 @@ hisobingizga urib qo'yardi.
 """
 from pathlib import Path
 
+import cloudcam
+
 import pytest
 
 from cloudcam import identity
 from cloudcam.settings import Settings, set_active
 
 ROOT = Path(__file__).resolve().parents[1]
+PKG = Path(cloudcam.__file__).resolve().parent
 OLD_HARDCODED = "1fc28fa018178a1cd1c091b13b2f9f02"
 
 
@@ -34,7 +37,8 @@ def test_hardcoded_shared_code_is_gone_from_the_source():
 
     `identity.py` — yagona istisno: u yerda kod faqat IZOHDA, nega tashlab
     yuborilgani tushuntirilgan."""
-    allowed = {"cloudcam/identity.py", f"tests/{Path(__file__).name}"}
+    allowed = {(PKG / "identity.py").relative_to(ROOT).as_posix(),
+               f"tests/{Path(__file__).name}"}
     offenders = [p.relative_to(ROOT).as_posix()
                  for p in ROOT.rglob("*.py")
                  if "venv" not in p.parts and ".claude" not in p.parts
@@ -48,7 +52,7 @@ def test_every_featurecode_value_comes_from_identity():
     to'g'ridan-to'g'ri yoki `self.FEATURE_CODE` xossasi orqali."""
     ok = ("feature_code()", "self.FEATURE_CODE")
     bad = [f"{p.name}:{i}"
-           for p in (ROOT / "cloudcam").glob("*.py")
+           for p in PKG.rglob("*.py")
            for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
            if '"featureCode":' in line and not any(k in line for k in ok)]
     assert not bad, f"featureCode qattiq yozilgan: {bad}"

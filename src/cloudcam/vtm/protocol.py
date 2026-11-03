@@ -15,12 +15,12 @@ O'zgarishlar:
 
 from __future__ import annotations
 
+import socket
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import IntEnum
 from ipaddress import IPv6Address, ip_address
-import socket
-import time
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 

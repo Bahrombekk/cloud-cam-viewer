@@ -13,10 +13,12 @@ from pathlib import Path
 
 import pytest
 
+import cloudcam
 from cloudcam import vtm_cache
 from cloudcam.settings import Settings, set_active
 
-SRC = Path(__file__).resolve().parents[1] / "cloudcam" / "decrypt_proxy.py"
+PKG = Path(cloudcam.__file__).resolve().parent
+SRC = PKG / "decrypt_proxy.py"
 
 
 @pytest.fixture(autouse=True)

@@ -8,14 +8,14 @@ Xususiyatlar:
   - Har bir kamera holatini kuzatadi (FPS, oxirgi frame vaqti)
 """
 
-import subprocess
-import sys
-import threading
-import socket
-import time
 import atexit
 import os
+import socket
+import subprocess
+import sys
 import tempfile
+import threading
+import time
 import weakref
 
 import numpy as np

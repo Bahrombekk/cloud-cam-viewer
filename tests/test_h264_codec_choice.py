@@ -11,7 +11,10 @@ from pathlib import Path
 from Crypto.Cipher import AES
 
 from cloudcam.decrypt_proxy import (
-    START, H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec,
+    START,
+    H264RtpDecryptor,
+    HevcRtpDecryptor,
+    detect_rtp_codec,
 )
 
 ROOT = Path(__file__).resolve().parents[1]

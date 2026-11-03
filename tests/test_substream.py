@@ -14,10 +14,12 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+import cloudcam
 from cloudcam import decrypt_proxy
 from cloudcam.vtm import STREAM_MAIN, STREAM_SUB, VtmError, build_vtm_url
 
-MGR = Path(__file__).resolve().parents[1] / "cloudcam" / "stream_manager.py"
+PKG = Path(cloudcam.__file__).resolve().parent
+MGR = PKG / "stream_manager.py"
 
 
 def _q(url):
@@ -78,7 +80,7 @@ def test_auto_mode_tries_substream_first_then_main():
     Hamma kamerada substream yo'q (batareyali modellar, ba'zi NVR kanallari):
     qattiq `sub` bunday kamerada qora ekran, qattiq `main` esa grid'da
     bekorga 1440p. Tartib va probe muddati shu yerda qo'riqlanadi."""
-    src = (Path(__file__).resolve().parents[1] / "cloudcam" / "decrypt_proxy.py"
+    src = (PKG / "decrypt_proxy.py"
            ).read_text(encoding="utf-8")
     m = re.search(r'attempts\s*=\s*\[\("sub",\s*STREAM_PROBE_TIMEOUT\),\s*\("main"', src)
     assert m, "auto rejimda substream BIRINCHI sinalishi kerak"

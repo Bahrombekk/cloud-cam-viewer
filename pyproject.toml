@@ -46,15 +46,15 @@ Changelog = "https://github.com/Bahrombekk/cloud-cam-viewer/blob/main/CHANGELOG.
 # `pip install` dan keyin buyruq sifatida ishlatiladi.
 cloudcam = "cloudcam.cli:main"
 
-[tool.setuptools]
-packages = ["cloudcam", "cloudcam.vtm"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.package-data]
 # Ko'chirilgan kodning litsenziyasi paket bilan birga tarqatilishi shart (Apache-2.0 §4).
 "cloudcam.vtm" = ["LICENSE-pyezvizapi"]
 
 [tool.setuptools.dynamic]
-# Versiyaning yagona manbasi — cloudcam/__init__.py
+# Versiyaning yagona manbasi — src/cloudcam/__init__.py
 version = { attr = "cloudcam.__version__" }
 
 [tool.ruff]

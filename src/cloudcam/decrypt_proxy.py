@@ -22,10 +22,10 @@ import json
 import os
 import sys
 import tempfile
-import time
 import threading
-from itertools import chain
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import chain
 
 from Crypto.Cipher import AES
 

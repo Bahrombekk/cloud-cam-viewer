@@ -24,12 +24,17 @@ except Exception:
 logging.basicConfig(level=logging.CRITICAL)
 
 import config
+
 from cloudcam import decrypt_proxy
-from cloudcam.i18n import t
 from cloudcam.decrypt_proxy import (
-    HEVC_VIDEO_PT, H264RtpDecryptor, HevcRtpDecryptor, PsStreamDecryptor,
-    detect_rtp_codec, open_cloud_stream,
+    HEVC_VIDEO_PT,
+    H264RtpDecryptor,
+    HevcRtpDecryptor,
+    PsStreamDecryptor,
+    detect_rtp_codec,
+    open_cloud_stream,
 )
+from cloudcam.i18n import t
 from cloudcam.vtm import rtp_payload
 
 

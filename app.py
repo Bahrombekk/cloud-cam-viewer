@@ -20,14 +20,14 @@ Klaviatura (video oynasida):
 import math
 import time
 
+import config
 import cv2
 import numpy as np
 
-from cloudcam.client import CloudClient
-from cloudcam.stream_manager import StreamManager, load_cam_keys
 from cloudcam import decrypt_proxy
+from cloudcam.client import CloudClient
 from cloudcam.i18n import t
-import config
+from cloudcam.stream_manager import StreamManager, load_cam_keys
 
 
 def choose_cameras(items):
