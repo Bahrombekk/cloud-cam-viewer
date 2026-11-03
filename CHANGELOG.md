@@ -31,6 +31,17 @@ minor versions; such changes are always listed here.
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue and pull-request templates.
 
 ### Changed
+- **BREAKING — package layout.** The code moved to a `src/` layout and is split into
+  layers that may only import downwards (`core < codec < media < sources < app`),
+  enforced by `tests/test_layout.py`. `decrypt_proxy.py` (1290 lines, six jobs) is now
+  `codec/{nal,rtp,ps,enc_cache}`, `media/paced`, `core/{ipc,paths}` and
+  `sources/cloud/{stream,devices,proxy}`; `client`, `keys`, `vtm_cache`, `vtm/`,
+  `rest` (was `cloud_api`) and `push` live in `sources/cloud/`, `isup` in `sources/`,
+  `fsutil` and `identity` in `core/`. The per-camera process is now
+  `python -m cloudcam.sources.cloud.proxy`. The public API (`cloudcam.CloudCam`,
+  `Stream`, `Camera`, `Settings`, the `cloudcam` CLI) is unchanged.
+- The helper scripts moved to `scripts/` (`python scripts/app.py`, …); `python -m cloudcam`
+  runs the CLI.
 - The version has a single source of truth, `cloudcam/__init__.py`;
   `pyproject.toml` reads it dynamically.
 - **`pyezvizapi` is no longer a dependency.** The part of it we used — the VTM/VTDU
@@ -53,6 +64,9 @@ minor versions; such changes are always listed here.
   comparison with alternatives. The deep-dive moved to `docs/internals.md`.
 
 ### Fixed
+- The `cloudcam` command ignored `config.py`: a console script has no working
+  directory on `sys.path`, so it reported "Account required" with a valid config next
+  to it. `config.py` is now also loaded from the working directory.
 - A page-list response with an error (`meta.code` ≠ 200, e.g. an expired session) was
   stored in the metadata cache as an empty device list, making every camera on the
   account look missing for up to an hour. It is now an error and is not cached.

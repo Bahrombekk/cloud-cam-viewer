@@ -5,11 +5,17 @@ Bu kod = videoni ochuvchi kalit. EZVIZ ilovasida kamerani ochganda so'raydigan
 yoki qurilma yorlig'idagi kod. Saqlangach app.py o'sha kamerani avtomatik dekodlaydi.
 
 Ishga tushirish:
-    python set_code.py BD8712447 SCXYKW
-    python set_code.py BD8712447 SCXYKW BD8712513 ABCDEF   # bir nechta (juft-juft)
+    python scripts/set_code.py BD8712447 SCXYKW
+    python scripts/set_code.py BD8712447 SCXYKW BD8712513 ABCDEF   # bir nechta (juft-juft)
 """
 
 import sys
+
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+
+# config.py loyiha ildizida: `python scripts/<nom>.py` ildizdan ishga tushiriladi.
+_sys.path.insert(0, _os.getcwd())
 
 import config
 
@@ -21,7 +27,7 @@ def main():
     args = sys.argv[1:]
     if len(args) < 2 or len(args) % 2 != 0:
         print(t("Usage", "Foydalanish")
-              + ": python set_code.py <SERIAL> <CODE> [<SERIAL> <CODE> ...]")
+              + ": python scripts/set_code.py <SERIAL> <CODE> [<SERIAL> <CODE> ...]")
         return
 
     # Kutubxonaning o'zi orqali: fayl 0600 bilan atomar yoziladi ([[cloudcam.sources.cloud.keys]]).
@@ -38,7 +44,7 @@ def main():
     _keys.save(keys, config.CAMKEY_FILE)
     print(t(f"\n💾 Saved {config.CAMKEY_FILE}: {list(keys)}",
             f"\n💾 {config.CAMKEY_FILE} saqlandi: {list(keys)}"))
-    print("➡️  " + t("Next: python app.py", "Endi: python app.py"))
+    print("➡️  " + t("Next: python scripts/app.py", "Endi: python scripts/app.py"))
 
 
 if __name__ == "__main__":

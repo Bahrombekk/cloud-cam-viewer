@@ -4,11 +4,17 @@ Bitta kamerani 24/7 uzilishsiz ko'rish.
 Stream uzilsa avtomatik qayta ulanadi, token avtomatik yangilanadi.
 
 Ishga tushirish:
-    python single.py GK8973616
-    python single.py GK8973616 --decrypt
+    python scripts/single.py GK8973616
+    python scripts/single.py GK8973616 --decrypt
 """
 
 import sys
+
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+
+# config.py loyiha ildizida: `python scripts/<nom>.py` ildizdan ishga tushiriladi.
+_sys.path.insert(0, _os.getcwd())
 
 import config
 import cv2
@@ -20,7 +26,7 @@ from cloudcam.stream_manager import StreamManager, load_cam_keys
 
 def main():
     if len(sys.argv) < 2:
-        print(t("Usage", "Foydalanish") + ": python single.py <SERIAL> [--decrypt]")
+        print(t("Usage", "Foydalanish") + ": python scripts/single.py <SERIAL> [--decrypt]")
         return
     serial = sys.argv[1]
     decrypt = "--decrypt" in sys.argv

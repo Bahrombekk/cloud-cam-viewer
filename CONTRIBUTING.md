@@ -27,8 +27,8 @@ CI runs the same two commands on Linux and Windows (Python 3.10 and 3.13).
 
 ## Ground rules
 
-- **No change without a test** in `cloudcam/decrypt_proxy.py`, `stream_manager.py` or
-  `vtm_cache.py`. These paths fail silently (a corrupted picture, not an exception),
+- **No change without a test** in `codec/`, `media/`, `stream_manager.py` or
+  `sources/cloud/{proxy,vtm_cache}.py`. These paths fail silently (a corrupted picture, not an exception),
   so tests are the only guard. Many existing tests protect behaviour that is easy to
   forget — read the test's docstring before changing what it asserts.
 - **Measure, don't guess.** Performance claims in PRs and in the README come with the
@@ -49,7 +49,7 @@ CI runs the same two commands on Linux and Windows (Python 3.10 and 3.13).
 ## Releases (maintainers)
 
 Versions follow [SemVer](https://semver.org/). The version lives only in
-`cloudcam/__init__.py`.
+`src/cloudcam/__init__.py`.
 
 1. Move the `[Unreleased]` changelog entries under a new `## [X.Y.Z] - YYYY-MM-DD`.
 2. Bump `__version__`, commit.

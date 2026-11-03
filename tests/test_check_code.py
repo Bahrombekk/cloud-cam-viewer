@@ -15,8 +15,16 @@ PROFILE_HIGH = 100
 
 def _import_check_code():
     sys.modules.setdefault("config", types.ModuleType("config"))
-    import check_code
-    return check_code
+    if "check_code" in sys.modules:
+        return sys.modules["check_code"]
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "scripts" / "check_code.py"
+    spec = importlib.util.spec_from_file_location("check_code", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["check_code"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 _seq = itertools.count()

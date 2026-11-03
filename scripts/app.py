@@ -8,7 +8,7 @@ Imkoniyatlar:
   - Har kamera holati ko'rinadi (FPS, qayta ulanishlar soni)
 
 Ishga tushirish:
-    python app.py
+    python scripts/app.py
 
 Klaviatura (video oynasida):
     q   - chiqish
@@ -19,6 +19,12 @@ Klaviatura (video oynasida):
 
 import math
 import time
+
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+
+# config.py loyiha ildizida: `python scripts/<nom>.py` ildizdan ishga tushiriladi.
+_sys.path.insert(0, _os.getcwd())
 
 import config
 import cv2

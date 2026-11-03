@@ -3,6 +3,11 @@
 > Har band: **nima · qayerda · nega · qanday**. Bandlar kodga solishtirib tekshirilgan;
 > tekshirilgan joylar fayl:satr bilan ko'rsatilgan.
 > `[x]` — bajarilgan, `[ ]` — qilinishi kerak.
+>
+> **Eslatma (v0.4 tuzilmasi):** quyidagi fayl:satr havolalari eski tekis tuzilmaga tegishli.
+> `decrypt_proxy.py` endi `codec/{nal,rtp,ps,enc_cache}`, `media/paced`, `core/ipc`,
+> `sources/cloud/{stream,devices,proxy}` ga bo'lingan; `client/keys/vtm_cache/vtm` —
+> `sources/cloud/` da; xarita: [docs/internals.md](docs/internals.md#project-layout).
 
 ---
 

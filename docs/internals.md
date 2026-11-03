@@ -58,7 +58,7 @@ each one measured against real cameras:
   its own thread; if the consumer stalls, whole frames are dropped **at keyframe
   boundaries** instead of the cloud socket backing up (a blocked socket makes the
   cloud drop packets, which is what corrupted the picture).
-- **Account-level metadata cache** (`cloudcam/vtm_cache.py`). The device page
+- **Account-level metadata cache** (`sources/cloud/vtm_cache.py`). The device page
   list and the VTDU token are per *account*, not per camera, yet a naive client
   re-fetches them on every open. They are now cached to disk (shared across the
   per-camera processes, 1 h TTL). Measured on a live account: page list 1.34 s +
@@ -98,32 +98,53 @@ each one measured against real cameras:
 
 ## Project layout
 
+The package is split into layers; each may import only the ones below it.
+`tests/test_layout.py` enforces this by parsing every import.
+
 ```
-cloud-cam-viewer/
-├── cloudcam/                # core library (package)
-│   ├── api.py               # high-level facade: CloudCam / Stream / Camera
-│   ├── cli.py               # `cloudcam` command (cameras, keys, snapshot, view)
-│   ├── client.py            # cloud login, session reuse, verification-code fetch
-│   ├── i18n.py              # t("English", "O'zbekcha") — CLOUDCAM_LANG=uz
-│   ├── identity.py          # per-install terminal id (featureCode)
-│   ├── isup.py              # ISUP 5.0 bridge client (cloud-free cameras)
-│   ├── keys.py              # verification-code store + cloud fetch (2FA flow)
-│   ├── settings.py          # Settings: config.py / CLOUDCAM_* env / defaults
-│   ├── stream_manager.py    # per-camera processes, reconnect, watchdog, GPU
-│   ├── vtm/                 # cloud stream transport (VTM/VTDU), adapted from pyezvizapi (Apache-2.0)
-│   ├── vtm_cache.py         # account-level metadata cache + channel gate
-│   ├── viewer.py            # OpenCV grid viewer (optional `viewer` extra)
-│   └── decrypt_proxy.py     # RTP/HEVC + MPEG-PS depacketize, AES decrypt, paced output
-├── docs/                    # this file and other long-form docs
-├── tests/                   # pytest (cloud is faked — no account needed)
-├── app.py                   # main multi-camera viewer (grid / fullscreen)
-├── single.py                # single-camera viewer
-├── set_code.py              # save a verification code
-├── check_code.py            # verify a verification code
-├── config.example.py        # settings template (copy to config.py)
-├── cam_keys.example.json    # verification-code file format
-├── requirements.txt
-├── README.md · CHANGELOG.md · CONTRIBUTING.md · SECURITY.md · LICENSE
+core  <  codec  <  media  <  sources  <  api / cli / viewer / stream_manager
 ```
 
-> Run all scripts from the project root (`python app.py`, `python check_code.py ...`).
+```
+cloud-cam-viewer/
+├── src/cloudcam/
+│   ├── api.py                 # high-level facade: CloudCam / Stream / Camera
+│   ├── cli.py, __main__.py    # `cloudcam` command / `python -m cloudcam`
+│   ├── settings.py            # Settings: config.py / CLOUDCAM_* env / defaults
+│   ├── i18n.py                # t("English", "O'zbekcha") — CLOUDCAM_LANG=uz
+│   ├── stream_manager.py      # per-camera processes, reconnect, watchdog, GPU
+│   ├── viewer.py              # OpenCV grid viewer (optional `viewer` extra)
+│   ├── core/                  # no knowledge of video or the cloud
+│   │   ├── fsutil.py          #   0600 atomic writes for secrets
+│   │   ├── identity.py        #   per-install terminal id (featureCode)
+│   │   ├── ipc.py             #   parent <-> camera-process contract (env, flag files)
+│   │   └── paths.py           #   where per-account cache files live
+│   ├── codec/                 # bytes in, bytes out: no sockets, no HTTP, no cloud
+│   │   ├── nal.py             #   NAL AES decryption + encryption-variant detection
+│   │   ├── rtp.py             #   RTP depacketising (H.264/HEVC, FU/AP, seq tracking)
+│   │   ├── ps.py              #   MPEG-PS demux + decryption
+│   │   └── enc_cache.py       #   cached per-camera inter-slice encryption decision
+│   ├── media/
+│   │   └── paced.py           #   jitter buffer (PacedWriter)
+│   └── sources/               # where video comes from
+│       ├── isup.py            #   ISUP 5.0 bridge client (cloud-free cameras)
+│       └── cloud/             #   EZVIZ / Hik-Connect cloud
+│           ├── client.py      #     login, session reuse, verification-code fetch
+│           ├── keys.py        #     verification-code store + cloud fetch (2FA)
+│           ├── devices.py     #     camera list (device + NVR channel)
+│           ├── stream.py      #     open a VTM stream for one camera
+│           ├── proxy.py       #     per-camera decrypting HTTP proxy (subprocess)
+│           ├── vtm_cache.py   #     account-level metadata cache + channel gate
+│           ├── rest.py        #     status, disks, events, records, PTZ
+│           ├── push.py        #     MQTT push events
+│           └── vtm/           #     stream transport, adapted from pyezvizapi (Apache-2.0)
+├── scripts/                   # app.py (grid), single.py, set_code.py, check_code.py
+├── tests/                     # pytest (cloud is faked — no account needed)
+├── docs/                      # this file and other long-form docs
+├── config.example.py          # settings template (copy to config.py)
+├── cam_keys.example.json      # verification-code file format
+└── README.md · CHANGELOG.md · CONTRIBUTING.md · SECURITY.md · LICENSE
+```
+
+> Run the scripts from the project root (`python scripts/app.py`, `python scripts/check_code.py ...`)
+> so they find `config.py`.

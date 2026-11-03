@@ -5,9 +5,9 @@ Kamera oqimidan birinchi keyframe (VPS) ni olib, kod to'g'ri/noto'g'ri yoki
 kamera umuman shifrlanmaganligini aniqlaydi. To'g'ri bo'lsa cam_keys.json ga saqlaydi.
 
 Ishga tushirish:
-    python check_code.py <SERIAL> <KOD> [KANAL]
-    python check_code.py <SERIAL>             # kodsiz: toza/shifrli ekanini aniqlaydi
-    python check_code.py <SERIAL> <KOD> all   # NVR ning hamma (1-4) kanalini tekshiradi
+    python scripts/check_code.py <SERIAL> <KOD> [KANAL]
+    python scripts/check_code.py <SERIAL>             # kodsiz: toza/shifrli ekanini aniqlaydi
+    python scripts/check_code.py <SERIAL> <KOD> all   # NVR ning hamma (1-4) kanalini tekshiradi
 """
 
 import json
@@ -22,6 +22,12 @@ except Exception:
     pass
 
 logging.basicConfig(level=logging.CRITICAL)
+
+import os as _os  # noqa: E402
+import sys as _sys  # noqa: E402
+
+# config.py loyiha ildizida: `python scripts/<nom>.py` ildizdan ishga tushiriladi.
+_sys.path.insert(0, _os.getcwd())
 
 import config
 
@@ -128,8 +134,8 @@ def report(serial, code, channel, result):
 
 def main():
     if len(sys.argv) < 2:
-        print(t("Usage: python check_code.py <SERIAL> [CODE] [CHANNEL|all]",
-                "Foydalanish: python check_code.py <SERIAL> [KOD] [KANAL|all]"))
+        print(t("Usage: python scripts/check_code.py <SERIAL> [CODE] [CHANNEL|all]",
+                "Foydalanish: python scripts/check_code.py <SERIAL> [KOD] [KANAL|all]"))
         return
     serial = sys.argv[1]
     code = sys.argv[2].strip() if len(sys.argv) > 2 else "AUTO"

@@ -13,7 +13,7 @@ on your machine with the camera's verification code, and hands you plain
 H.264/H.265 frames as a CLI, a multi-camera viewer or a Python library.
 Hikvision devices can skip the cloud completely over **ISUP 5.0**.
 
-<!-- DEMO: replace with a 20–40 s recording of `python app.py` (grid → fullscreen).
+<!-- DEMO: replace with a 20–40 s recording of `python scripts/app.py` (grid → fullscreen).
 <p align="center"><img src="docs/demo.gif" alt="cloudcam grid viewer" width="800"></p>
 -->
 
@@ -139,7 +139,7 @@ Every setting can come from a `CLOUDCAM_*` environment variable, a CLI flag
 git clone https://github.com/Bahrombekk/cloud-cam-viewer.git && cd cloud-cam-viewer
 pip install -e ".[viewer]"
 cp config.example.py config.py      # then edit PLATFORM / EMAIL / PASSWORD
-python app.py                       # grid viewer   ·   python single.py <SERIAL>
+python scripts/app.py               # grid viewer   ·   python scripts/single.py <SERIAL>
 ```
 
 Set `CLOUDCAM_LANG=uz` for Uzbek messages.
@@ -199,13 +199,13 @@ The result is `cam_keys.json` — a flat serial → code map (see
 For an NVR the code belongs to the **device**, so one entry covers all of its
 channels — you do not add `ch1`, `ch2`, … separately.
 
-Now `python app.py` decodes those cameras. Manual entry still works when you
+Now `python scripts/app.py` decodes those cameras. Manual entry still works when you
 already know a code, or when the account cannot elevate to 2FA:
 
 ```bash
-python check_code.py <SERIAL> <CODE>        # verify a code (saves it if correct)
-python check_code.py <SERIAL> <CODE> all    # all 4 NVR channels
-python set_code.py   <SERIAL> <CODE>        # save a code directly
+python scripts/check_code.py <SERIAL> <CODE>        # verify a code (saves it if correct)
+python scripts/check_code.py <SERIAL> <CODE> all    # all 4 NVR channels
+python scripts/set_code.py   <SERIAL> <CODE>        # save a code directly
 ```
 
 Codes are the AES key, so they are **case-sensitive** and stored exactly as
@@ -216,7 +216,7 @@ upper case (label codes are upper case; a code changed in the app may not be).
 encrypted, or no keyframe yet):
 
 ```
-$ python check_code.py BD8712447 SCXYKW
+$ python scripts/check_code.py BD8712447 SCXYKW
 🔎 Checking: BD8712447 ch1 (code: SCXYKW) ...
 ✅ BD8712447 ch1: CODE IS CORRECT! Stream decrypted.
    💾 Saved to cam_keys.json: BD8712447 -> SCXYKW
@@ -382,11 +382,11 @@ Security issues: please report privately, see [SECURITY.md](SECURITY.md).
 
 This is an independent, unofficial project. Use it only with cameras and accounts you
 own or are authorized to access. The authors are not affiliated with EZVIZ or Hikvision.
-The cloud stream transport (`cloudcam/vtm/`) is adapted from
+The cloud stream transport (`src/cloudcam/sources/cloud/vtm/`) is adapted from
 [`pyezvizapi`](https://github.com/RenierM26/pyEzvizApi) 1.0.5.0 by Renier Moorcroft,
-Apache License 2.0, see [`cloudcam/vtm/LICENSE-pyezvizapi`](cloudcam/vtm/LICENSE-pyezvizapi).
+Apache License 2.0, see [`LICENSE-pyezvizapi`](src/cloudcam/sources/cloud/vtm/LICENSE-pyezvizapi).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). `cloudcam/vtm/` contains code adapted from `pyezvizapi`
+MIT, see [LICENSE](LICENSE). `src/cloudcam/sources/cloud/vtm/` contains code adapted from `pyezvizapi`
 under the Apache License 2.0 (notice and full text in that directory).
