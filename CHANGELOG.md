@@ -9,6 +9,20 @@ minor versions; such changes are always listed here.
 ## [Unreleased]
 
 ### Added
+- **Device status** (`cloudcam status`, `CloudCam.status()`): online/offline, NVR disk
+  state and capacity, video encryption, privacy mode, in one request for the whole account.
+- **Events** (`cloudcam events`, `CloudCam.events()`, `CloudCam.event_image()`): recent
+  motion/alarm messages. Encrypted event pictures are decrypted with the camera's
+  verification code; the session id is never sent to the picture host.
+- **Live push events** (`cloudcam events --watch`, `CloudCam.push()`) over MQTT, optional
+  extra `cloudcam[events]` (paho-mqtt). The push host is checked against the cloud domains.
+- **Recordings on the device** (`cloudcam records`, `CloudCam.records()`): SD-card / NVR
+  segments with paging; list of **cloud-storage videos** (`cloud_api.cloud_videos`).
+- **PTZ** (`cloudcam ptz`, `CloudCam.ptz()`) with the NVR channel passed through
+  (pyezvizapi always sends channel 1), and `cloud_api.capture()`.
+- Endpoints, payload shapes and the picture/push code are adapted from pyezvizapi 1.0.5.0
+  (Apache-2.0). Status, events, recordings and cloud videos were verified on a live
+  Hik-Connect account; PTZ, capture and push registration were not exercised live.
 - English is now the default language for every user-facing message (CLI, viewer
   overlay, helper scripts). Set `CLOUDCAM_LANG=uz` for Uzbek.
 - GitHub Actions CI: `ruff` + `pytest` on Linux and Windows, Python 3.10 and 3.13.

@@ -247,6 +247,54 @@ class CloudCam:
                            width=width, height=height, key=key)
         return Stream(cs)
 
+    # ── holat, hodisalar, yozuvlar, PTZ ([[cloudcam.cloud_api]]) ─────
+    def status(self, serials=None) -> dict:
+        """{serial: DeviceStatus} — online, disklar, shifrlash. Bitta so'rov.
+
+        `serials=None` -> hisobdagi hamma qurilma. Holat QURILMA darajasida
+        (NVR online bo'lsa ham undagi alohida kamera uzilgan bo'lishi mumkin)."""
+        from . import cloud_api
+        if serials is None:
+            serials = {c.serial for c in self.cameras()}
+        return cloud_api.device_status(self.client, serials)
+
+    def events(self, serials=None, *, limit: int = 20, cursor: str = ""):
+        """Oxirgi hodisalar (harakat, odam, ...): (hodisalar, keyingi_kursor)."""
+        from . import cloud_api
+        return cloud_api.messages(self.client, serials, limit=limit, cursor=cursor)
+
+    def event_image(self, event) -> bytes:
+        """Hodisa rasmi; shifrlangan bo'lsa `cam_keys.json` dagi kod bilan ochiladi."""
+        from . import cloud_api
+        if not event.picture_url:
+            raise ValueError("Event has no picture")
+        code = load_cam_keys(self.settings.camkey_file).get(event.serial)
+        return cloud_api.download_image(event.picture_url,
+                                        None if code in (None, "AUTO") else code)
+
+    def records(self, serial: str, channel: int = 1, start=None, end=None):
+        """Qurilma (SD/NVR) yozuvlari: [Record(start, end, type)]. Standart — oxirgi 24 soat."""
+        import datetime as _dt
+        from . import cloud_api
+        end = end or _dt.datetime.now()
+        start = start or end - _dt.timedelta(days=1)
+        return cloud_api.records(self.client, serial, channel, start, end)
+
+    def ptz(self, serial: str, command: str, *, channel: int = 1, speed: int = 5,
+            duration: float = 0.5) -> None:
+        """PTZ: `command` (UP, DOWN, LEFT, RIGHT, ZOOMIN, ...) `duration` soniya."""
+        from . import cloud_api
+        cloud_api.ptz(self.client, serial, command, "START", channel=channel, speed=speed)
+        try:
+            time.sleep(max(0.0, duration))
+        finally:
+            cloud_api.ptz(self.client, serial, command, "STOP", channel=channel, speed=speed)
+
+    def push(self, on_event):
+        """Push hodisalari (MQTT): `with cam.push(print): ...`. `cloudcam[events]` kerak."""
+        from .push import PushClient
+        return PushClient(self.client, on_event)
+
     # ── ISUP 5.0 ([[cloudcam.isup]]) ─────────────────────────────────
     @property
     def isup(self):
