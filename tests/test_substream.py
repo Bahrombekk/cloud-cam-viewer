@@ -15,7 +15,8 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 import cloudcam
-from cloudcam import decrypt_proxy
+from cloudcam.sources.cloud import proxy as decrypt_proxy
+from cloudcam.sources.cloud import stream as cloud_stream
 from cloudcam.sources.cloud.vtm import STREAM_MAIN, STREAM_SUB, VtmError, build_vtm_url
 
 PKG = Path(cloudcam.__file__).resolve().parent
@@ -60,10 +61,10 @@ def test_proxy_passes_stream_type_to_the_url_builder(monkeypatch):
         seen.update(kw)
         return "cm"
 
-    monkeypatch.setattr(decrypt_proxy.vtm_cache, "pagelist", lambda c: {})
-    monkeypatch.setattr(decrypt_proxy.vtm_cache, "vtdu", lambda c: {})
-    monkeypatch.setattr(decrypt_proxy._vtm, "open_cloud_stream", _open)
-    assert decrypt_proxy.open_cloud_stream(object(), "A1", channel=3,
+    monkeypatch.setattr(cloud_stream.vtm_cache, "pagelist", lambda c: {})
+    monkeypatch.setattr(cloud_stream.vtm_cache, "vtdu", lambda c: {})
+    monkeypatch.setattr(cloud_stream._vtm, "open_cloud_stream", _open)
+    assert cloud_stream.open_cloud_stream(object(), "A1", channel=3,
                                            stream_type=STREAM_SUB) == "cm"
     assert seen["stream_type"] == STREAM_SUB and seen["channel"] == 3
 
@@ -80,7 +81,7 @@ def test_auto_mode_tries_substream_first_then_main():
     Hamma kamerada substream yo'q (batareyali modellar, ba'zi NVR kanallari):
     qattiq `sub` bunday kamerada qora ekran, qattiq `main` esa grid'da
     bekorga 1440p. Tartib va probe muddati shu yerda qo'riqlanadi."""
-    src = (PKG / "decrypt_proxy.py"
+    src = (PKG / "sources" / "cloud" / "proxy.py"
            ).read_text(encoding="utf-8")
     m = re.search(r'attempts\s*=\s*\[\("sub",\s*STREAM_PROBE_TIMEOUT\),\s*\("main"', src)
     assert m, "auto rejimda substream BIRINCHI sinalishi kerak"

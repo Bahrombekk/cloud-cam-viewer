@@ -155,10 +155,9 @@ class CloudCam:
         yarmidan ko'p eskirgan bo'lsa yangilaydi — hisobga 2 ta bulut so'rovi."""
         if self._warmer is not None or not self.settings.warm_cache:
             return
-        from cloudcam import decrypt_proxy
-        from cloudcam.sources.cloud import vtm_cache
-        self._warmer = vtm_cache.Warmer(decrypt_proxy._make_client,
-                                        decrypt_proxy._CACHE_KEY).start()
+        from cloudcam.sources.cloud import proxy, stream, vtm_cache
+        self._warmer = vtm_cache.Warmer(stream._make_client,
+                                        proxy._CACHE_KEY).start()
 
     # ── hisob ────────────────────────────────────────────────────────
     def login(self, *, force: bool = False) -> "CloudCam":
@@ -212,13 +211,12 @@ class CloudCam:
     # ── kameralar ────────────────────────────────────────────────────
     def cameras(self) -> list[Camera]:
         """Kamera ulangan kanallar ro'yxati (bo'sh NVR slotlari emas)."""
-        from cloudcam import decrypt_proxy
-        from cloudcam.sources.cloud import vtm_cache
+        from cloudcam.sources.cloud import devices, vtm_cache
         # Shu hisob keshidan foydalanadi (va uni to'ldiradi) — keyingi `open()`
         # pagelist'ni bulutdan qayta so'ramaydi ([[vtm_cache.tag]]).
         vtm_cache.tag(self.client, self.settings.token_file)
         return [Camera(serial, ch, name)
-                for serial, ch, name in decrypt_proxy.list_cameras(self.client)]
+                for serial, ch, name in devices.list_cameras(self.client)]
 
     def open(self, serial: str, channel: int = 1, *, decrypt: bool = True,
              key: Optional[str] = None, width: Optional[int] = None,

@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any
 
+from cloudcam.core.paths import cache_dir  # noqa: F401  (re-export)
 from cloudcam.settings import get_active
 from cloudcam.sources.cloud.vtm import cloud as _cloud
 
@@ -38,13 +39,6 @@ def _ttl() -> float:
         return float(os.environ.get(_ENV_TTL) or TTL_SECONDS)
     except ValueError:
         return TTL_SECONDS
-
-
-def cache_dir() -> str:
-    """Kesh fayllari joyi — token fayli yonida (u ham hisobga tegishli)."""
-    tok = get_active().token_file or "token.json"
-    d = os.path.dirname(os.path.abspath(tok))
-    return d or tempfile.gettempdir()
 
 
 def account_key(token_file: str | None = None) -> str:

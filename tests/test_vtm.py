@@ -102,7 +102,7 @@ def test_start_follows_redirect_then_streams_and_answers_keepalive():
 
 
 def test_silent_socket_is_reported_as_offline():
-    """Matn muhim: decrypt_proxy "offline"/"unreachable" bo'yicha bayroq qo'yadi."""
+    """Matn muhim: proxy "offline"/"unreachable" bo'yicha bayroq qo'yadi."""
     c = P.VtmStreamClient(URL, socket_factory=lambda a, t: FakeSock(b"", then_timeout=True))
     with c, pytest.raises(DeviceOffline, match="offline or unreachable"):
         c.start()
@@ -139,7 +139,7 @@ def test_stream_info_builds_url():
 
 
 def test_missing_resource_message_is_stable():
-    """decrypt_proxy._is_missing_resource shu matnni qidiradi."""
+    """sources.cloud.stream._is_missing_resource shu matnni qidiradi."""
     with pytest.raises(VtmError, match="Could not find VTM resource"):
         cloud.get_cloud_stream_info(PL, {"tokens": ["T"]}, "S", channel=3)
 

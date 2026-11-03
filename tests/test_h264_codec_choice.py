@@ -3,19 +3,15 @@
 `check_code.py` RTP uchun DOIM `HevcRtpDecryptor` yaratardi. H.264 da SPS
 bayti 0x67 bo'lib, HEVC qoidasida bu tur 51 (VPS=32 emas) — ya'ni param-set
 hech qachon topilmasdi, `key_error` ham qo'yilmasdi. Natija: H.264 kamerada
-KOD TO'G'RI bo'lsa ham doim "keyframe kelmadi" chiqardi. `decrypt_proxy.serve`
+KOD TO'G'RI bo'lsa ham doim "keyframe kelmadi" chiqardi. `proxy.serve`
 esa codec'ni to'g'ri aniqlardi — ya'ni ikki yo'l bir-biriga zid edi.
 """
 from pathlib import Path
 
 from Crypto.Cipher import AES
 
-from cloudcam.decrypt_proxy import (
-    START,
-    H264RtpDecryptor,
-    HevcRtpDecryptor,
-    detect_rtp_codec,
-)
+from cloudcam.codec.nal import START
+from cloudcam.codec.rtp import H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "VERIFYCODE1"

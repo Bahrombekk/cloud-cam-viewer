@@ -18,7 +18,7 @@ import urllib.request
 
 import pytest
 
-from cloudcam import decrypt_proxy
+from cloudcam.sources.cloud import proxy as decrypt_proxy
 
 from cloudcam.sources.cloud import vtm_cache
 from cloudcam.sources.cloud.vtm import STREAM_SUB

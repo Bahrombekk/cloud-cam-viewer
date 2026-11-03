@@ -25,15 +25,11 @@ logging.basicConfig(level=logging.CRITICAL)
 
 import config
 
-from cloudcam import decrypt_proxy
-from cloudcam.decrypt_proxy import (
-    HEVC_VIDEO_PT,
-    H264RtpDecryptor,
-    HevcRtpDecryptor,
-    PsStreamDecryptor,
-    detect_rtp_codec,
-    open_cloud_stream,
-)
+from cloudcam.codec.nal import HEVC_VIDEO_PT
+from cloudcam.codec.ps import PsStreamDecryptor
+from cloudcam.codec.rtp import H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec
+from cloudcam.sources.cloud import stream as cloud_stream
+from cloudcam.sources.cloud.stream import open_cloud_stream
 from cloudcam.i18n import t
 from cloudcam.sources.cloud.vtm import rtp_payload
 
@@ -140,7 +136,7 @@ def main():
     ch_arg = sys.argv[3] if len(sys.argv) > 3 else "1"
     channels = [1, 2, 3, 4] if ch_arg == "all" else [int(ch_arg)]
 
-    client = decrypt_proxy._make_client()
+    client = cloud_stream._make_client()
     for ch in channels:
         print("🔎 " + t(f"Checking: {serial} ch{ch} (code: {code}) ...",
                          f"Tekshirilmoqda: {serial} ch{ch} (kod: {code}) ..."))

@@ -8,11 +8,11 @@ import types
 
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy
+from cloudcam.core import ipc
 
 from cloudcam import stream_manager
 from cloudcam.sources.cloud.client import CloudClient
-from cloudcam.decrypt_proxy import HevcRtpDecryptor
+from cloudcam.codec.rtp import HevcRtpDecryptor
 from cloudcam.settings import Settings
 
 # ---- 1. jarayon hayoti ------------------------------------------------------
@@ -39,7 +39,7 @@ def test_stop_proc_tolerates_none_and_finished():
 def test_proxy_exits_when_parent_pipe_closes():
     """Ota jarayon o'lsa OS stdin quvurini yopadi -> proxy o'zi chiqadi."""
     code = ("import time, os; os.environ['CLOUDCAM_PARENT_WATCH']='1';"
-            "from cloudcam.decrypt_proxy import watch_parent; watch_parent();"
+            "from cloudcam.core.ipc import watch_parent; watch_parent();"
             "time.sleep(60)")
     p = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
                          cwd=str(stream_manager.os.path.dirname(
@@ -50,7 +50,7 @@ def test_proxy_exits_when_parent_pipe_closes():
 
 def test_watch_parent_calls_exit_on_eof():
     called = []
-    th = decrypt_proxy.watch_parent(io.BytesIO(b"x" * 10), on_exit=lambda: called.append(1))
+    th = ipc.watch_parent(io.BytesIO(b"x" * 10), on_exit=lambda: called.append(1))
     th.join(timeout=5)
     assert called == [1]
 
@@ -63,7 +63,7 @@ def test_proxy_is_started_with_parent_watch(monkeypatch):
     cs._start_proxy()
     assert seen["stdin"] is subprocess.PIPE
     assert seen["env"][stream_manager.PARENT_WATCH_ENV] == "1"
-    assert decrypt_proxy.PARENT_WATCH_ENV == stream_manager.PARENT_WATCH_ENV
+    assert ipc.PARENT_WATCH_ENV == stream_manager.PARENT_WATCH_ENV
 
 
 def test_proxy_started_after_stop_is_killed(monkeypatch):

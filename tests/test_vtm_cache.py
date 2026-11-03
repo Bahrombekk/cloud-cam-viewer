@@ -18,7 +18,7 @@ from cloudcam.sources.cloud import vtm_cache
 from cloudcam.settings import Settings, set_active
 
 PKG = Path(cloudcam.__file__).resolve().parent
-SRC = PKG / "decrypt_proxy.py"
+SRC = PKG / "sources" / "cloud" / "proxy.py"
 
 
 @pytest.fixture(autouse=True)
@@ -202,7 +202,7 @@ def test_open_failure_handler_never_runs_after_streaming_started():
 
 
 def test_missing_resource_is_not_stale_metadata():
-    from cloudcam.decrypt_proxy import _is_missing_resource
+    from cloudcam.sources.cloud.stream import _is_missing_resource
 
     assert _is_missing_resource(Exception("Could not find VTM resource for serial X")) is True
     assert _is_missing_resource(Exception("Device offline or unreachable")) is False

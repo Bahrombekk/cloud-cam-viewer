@@ -7,7 +7,7 @@ o'zimizniki va `CloudClient` ni to'g'ridan-to'g'ri qabul qiladi.
 """
 import pytest
 
-from cloudcam import decrypt_proxy as dp
+from cloudcam.sources.cloud import devices as dp
 
 
 class FakeCloudClient:

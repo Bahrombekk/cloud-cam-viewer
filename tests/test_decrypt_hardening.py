@@ -18,8 +18,11 @@ import json
 import pytest
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy as dp
-from cloudcam.decrypt_proxy import START, HevcRtpDecryptor, PsStreamDecryptor
+from cloudcam.codec import enc_cache, ps
+from cloudcam.codec import nal as nal_mod
+from cloudcam.codec.nal import START
+from cloudcam.codec.ps import PsStreamDecryptor
+from cloudcam.codec.rtp import HevcRtpDecryptor
 from cloudcam.settings import Settings, set_active
 
 KEY = "VERIFYCODE1"
@@ -97,11 +100,11 @@ def test_the_gate_opens_on_the_first_irap_and_stays_open():
 
 def test_the_gate_force_opens_so_a_camera_without_irap_still_shows():
     """IRAP belgilamaydigan kamerada tasvir umuman kelmay qolmasligi kerak."""
-    n = dp._IRAP_MAX_WAIT + 5
+    n = nal_mod._IRAP_MAX_WAIT + 5
     dec, out = _run([_vps()] + [_inter(i % 200) for i in range(n)])
     assert dec._seen_irap is True, "darvoza majburan ochilmadi"
     assert dec.gate_note and "majburan" in dec.gate_note
-    assert dp._IRAP_MAX_WAIT <= 1000, "kutish juda uzun — ochilish sekinlashadi"
+    assert nal_mod._IRAP_MAX_WAIT <= 1000, "kutish juda uzun — ochilish sekinlashadi"
 
 
 def test_the_gate_also_applies_to_a_clear_stream():
@@ -127,7 +130,7 @@ def test_a_cached_decision_removes_the_startup_buffering(_cache_dir):
     """Kesh borligida birinchi inter slice DARHOL chiqadi — 8 namuna kutilmaydi.
 
     Aynan shu kutish o'lchovda birinchi kadrga 0.65-0.85s qo'shardi."""
-    dp._enc_cache_store("CAM2-1", False)
+    enc_cache._enc_cache_store("CAM2-1", False)
     dec = HevcRtpDecryptor(KEY, cache_key="CAM2-1")
     assert dec._pending is None, "kesh bor, lekin baribir buferlanmoqda"
     out = bytearray()
@@ -138,7 +141,7 @@ def test_a_cached_decision_removes_the_startup_buffering(_cache_dir):
 
 def test_a_wrong_cached_decision_corrects_itself(_cache_dir):
     """Kamera proshivkasi o'zgarsa kesh eskiradi — o'zini tuzatishi shart."""
-    dp._enc_cache_store("CAM3-1", True)          # noto'g'ri: aslida TOZA
+    enc_cache._enc_cache_store("CAM3-1", True)          # noto'g'ri: aslida TOZA
     dec, _ = _run([_vps(), _irap(0)] + [_inter(i) for i in range(10)],
                   cache_key="CAM3-1")
     assert dec._inter_enc is False, "kesh xato bo'lsa ham tuzatilmadi"
@@ -148,7 +151,7 @@ def test_a_wrong_cached_decision_corrects_itself(_cache_dir):
 
 
 def test_a_correct_cached_decision_is_left_alone(_cache_dir):
-    dp._enc_cache_store("CAM4-1", False)
+    enc_cache._enc_cache_store("CAM4-1", False)
     dec, _ = _run([_vps(), _irap(0)] + [_inter(i) for i in range(10)],
                   cache_key="CAM4-1")
     assert dec._inter_enc is False
@@ -158,7 +161,7 @@ def test_a_correct_cached_decision_is_left_alone(_cache_dir):
 
 def test_a_broken_cache_file_is_ignored(_cache_dir):
     (_cache_dir / "enc-CAM5-1.json").write_text("{buzuq", encoding="utf-8")
-    assert dp._enc_cache_load("CAM5-1") is None
+    assert enc_cache._enc_cache_load("CAM5-1") is None
     dec = HevcRtpDecryptor(KEY, cache_key="CAM5-1")
     assert dec._inter_enc is None and dec._pending == []
 
@@ -177,14 +180,14 @@ def test_a_startcodeless_stream_does_not_grow_the_buffer_forever():
     dec = PsStreamDecryptor(KEY)
     for _ in range(6):
         dec.feed(b"\xff" * (1 << 20))
-    assert len(dec._buf) <= dp._MAX_PS_BUF, "PS buferi chegaradan oshdi"
+    assert len(dec._buf) <= ps._MAX_PS_BUF, "PS buferi chegaradan oshdi"
     assert dec.buf_resyncs > 0, "resync umuman bo'lmadi"
 
 
 def test_resync_keeps_the_last_start_code():
     """Resync oxirgi start-kodni SAQLAYDI — keyingi NAL yo'qolmasin."""
     dec = PsStreamDecryptor(KEY)
-    dec.feed(b"\xff" * (dp._MAX_PS_BUF + 16) + b"\x00\x00\x01\xe0")
+    dec.feed(b"\xff" * (ps._MAX_PS_BUF + 16) + b"\x00\x00\x01\xe0")
     assert dec._buf.startswith(b"\x00\x00\x01"), "start-kod resyncda yo'qoldi"
 
 

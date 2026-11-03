@@ -46,7 +46,7 @@ def test_key_is_not_on_command_line(monkeypatch):
 
 
 def test_proxy_reads_key_from_env(monkeypatch):
-    from cloudcam import decrypt_proxy
+    from cloudcam.sources.cloud import proxy as decrypt_proxy
     assert decrypt_proxy.KEY_ENV == stream_manager.KEY_ENV
     monkeypatch.setenv(decrypt_proxy.KEY_ENV, "QWERTY")
     assert decrypt_proxy.resolve_key("-") == "QWERTY"
@@ -57,7 +57,7 @@ def test_plain_camera_uses_our_proxy_with_auto_key(monkeypatch):
     """Shifrlanmagan kamera ham `decrypt_proxy` orqali ("AUTO" — dekoderlar toza
     oqimni o'zi aniqlaydi). Ilgari alohida `python -m pyezvizapi` jarayoni edi."""
     seen = _captured_env(monkeypatch, decrypt=False)
-    assert "cloudcam.decrypt_proxy" in seen["cmd"]
+    assert "cloudcam.sources.cloud.proxy" in seen["cmd"]
     assert "pyezvizapi" not in " ".join(seen["cmd"])
     assert seen["env"][stream_manager.KEY_ENV] == "AUTO"
     assert os.path.isabs(seen["env"]["CLOUDCAM_TOKEN_FILE"])

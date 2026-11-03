@@ -24,6 +24,9 @@ from ipaddress import IPv6Address, ip_address
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse
 
+from cloudcam.codec.rtp import RtpError
+from cloudcam.codec.rtp import rtp_payload as _rtp_payload
+
 VTM_MAGIC = 0x24
 VTM_HEADER_SIZE = 8
 CLIENT_VERSION = "v3.6.3.20221124"
@@ -518,28 +521,9 @@ def _proto_last_str(fields: dict[int, list[ProtoValue]], field: int) -> str | No
 # ---- RTP ----------------------------------------------------------------
 
 def rtp_payload(data: bytes) -> bytes:
-    """RTP paketining foydali yuki (fixed, CSRC, extension, padding olib tashlanadi)."""
-    if len(data) < 12:
-        raise VtmError("RTP packet is too short")
-    if data[0] >> 6 != 2:
-        raise VtmError("Unsupported RTP version")
-    has_padding = bool(data[0] & 0x20)
-    has_extension = bool(data[0] & 0x10)
-    offset = 12 + (data[0] & 0x0F) * 4
-    if len(data) < offset:
-        raise VtmError("RTP CSRC header exceeds packet length")
-    if has_extension:
-        if len(data) < offset + 4:
-            raise VtmError("RTP extension header exceeds packet length")
-        offset += 4 + int.from_bytes(data[offset + 2:offset + 4], "big") * 4
-        if len(data) < offset:
-            raise VtmError("RTP extension payload exceeds packet length")
-    payload = data[offset:]
-    if has_padding:
-        if not payload:
-            raise VtmError("RTP padding set without payload")
-        padding_len = payload[-1]
-        if padding_len == 0 or padding_len > len(payload):
-            raise VtmError("Invalid RTP padding length")
-        payload = payload[:-padding_len]
-    return payload
+    """RTP paketining foydali yuki — [[cloudcam.codec.rtp.rtp_payload]] ustidan,
+    xatosi bu modul API'sidagidek `VtmError`."""
+    try:
+        return _rtp_payload(data)
+    except RtpError as e:
+        raise VtmError(str(e)) from None

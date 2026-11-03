@@ -8,7 +8,8 @@ holda buferlab, o'lchangan tezlikda chiqaradi.
 import threading
 import time
 
-from cloudcam.decrypt_proxy import START, PacedWriter
+from cloudcam.codec.nal import START
+from cloudcam.media.paced import PacedWriter
 
 
 class FakeWfile:

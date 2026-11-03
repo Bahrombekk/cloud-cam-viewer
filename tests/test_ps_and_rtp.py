@@ -3,7 +3,8 @@ import itertools
 
 from Crypto.Cipher import AES
 
-from cloudcam.decrypt_proxy import HevcRtpDecryptor, PsStreamDecryptor
+from cloudcam.codec.ps import PsStreamDecryptor
+from cloudcam.codec.rtp import HevcRtpDecryptor
 
 KEY = "ABCDEF"
 _K = KEY.encode().ljust(16, b"\0")

@@ -13,22 +13,25 @@ import os
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import weakref
 
 import numpy as np
 
+# Proxy bilan shartnoma (muhit o'zgaruvchilari, bayroq fayllar) bitta joyda —
+# [[cloudcam.core.ipc]]: ikki tomon nomlari endi ajralib keta olmaydi.
+from cloudcam.core.ipc import (
+    KEY_ENV,
+    PARENT_WATCH_ENV,
+    keyerror_flag_path,
+    offline_flag_path,
+)
 from cloudcam.i18n import t
 from cloudcam.settings import get_active
 
-# Shifr kodi proxy subprocess'iga shu muhit o'zgaruvchisi orqali uzatiladi
-# (decrypt_proxy ham shu nomni o'qiydi — ikkalasida bir xil bo'lishi shart).
-KEY_ENV = "CLOUDCAM_CAM_KEY"
-# Shu o'rnatilgan bo'lsa proxy stdin'ni kuzatadi: ota jarayon o'lsa OS quvurni
-# yopadi (EOF) va proxy o'zi chiqadi — yetim proxy portni band qilib qolmaydi.
-PARENT_WATCH_ENV = "CLOUDCAM_PARENT_WATCH"
+# Har kamera proxy'si shu modul sifatida ishga tushadi.
+PROXY_MODULE = "cloudcam.sources.cloud.proxy"
 
 
 def _stop_proc(proc, timeout=3.0):
@@ -132,21 +135,25 @@ class CameraStream:
         return False
 
     def _keyerr_path(self):
-        return os.path.join(tempfile.gettempdir(),
-                            f"ezviz_keyerr_{self.serial}_{self.channel}.flag")
+        return keyerror_flag_path(self.serial, self.channel)
 
     def _offline_path(self):
-        return os.path.join(tempfile.gettempdir(),
-                            f"ezviz_offline_{self.serial}_{self.channel}.flag")
+        return offline_flag_path(self.serial, self.channel)
 
     def _project_root(self):
-        # cloudcam/ ning ota-papkasi = loyiha ildizi
+        """`cloudcam` paketini import qila oladigan papka (src/ layout'da `src/`):
+        proxy shu cwd bilan ishga tushadi, paket o'rnatilmagan bo'lsa ham topiladi."""
         return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def _python_exe(self):
-        """venv python (Crypto/requests shu yerda). 'py app.py' bilan ham ishlashi uchun."""
-        venv_py = os.path.join(self._project_root(), "venv", "Scripts", "python.exe")
-        return venv_py if os.path.exists(venv_py) else sys.executable
+        """venv python (Crypto/requests shu yerda). 'py app.py' bilan ham ishlashi uchun.
+        venv loyiha ildizida — src/ layout'da bu `src/` ning ota-papkasi."""
+        root = self._project_root()
+        for base in (root, os.path.dirname(root)):
+            venv_py = os.path.join(base, "venv", "Scripts", "python.exe")
+            if os.path.exists(venv_py):
+                return venv_py
+        return sys.executable
 
     def _start_proxy(self):
         _stop_proc(self.proxy_proc)
@@ -179,15 +186,15 @@ class CameraStream:
         env[KEY_ENV] = self.key if (self.decrypt and self.key) else "AUTO"
         env[PARENT_WATCH_ENV] = "1"
         cmd = [
-            python, "-m", "cloudcam.decrypt_proxy",
+            python, "-m", PROXY_MODULE,
             self.serial, str(self.port), "-", str(self.channel),
         ]
-        # Grid uchun bulutdan KICHIK oqim so'raymiz ([[decrypt_proxy.open_cloud_stream]]):
+        # Grid uchun bulutdan KICHIK oqim so'raymiz ([[sources.cloud.stream.open_cloud_stream]]):
         # plitka baribir ~250-500 px, 1440p esa 36 barobar ortiqcha trafik.
         mode = "sub" if s.substream else s.stream_mode
         if mode in ("sub", "auto"):
             cmd.append(f"--stream={mode}")
-        # stdin=PIPE — ota jarayon yiqilsa quvur yopiladi va decrypt_proxy buni
+        # stdin=PIPE — ota jarayon yiqilsa quvur yopiladi va proxy buni
         # sezib chiqadi ([[PARENT_WATCH_ENV]]). Biz unga hech narsa yozmaymiz.
         self.proxy_proc = subprocess.Popen(
             cmd, cwd=self._project_root(), env=env, stdin=subprocess.PIPE,
@@ -226,7 +233,7 @@ class CameraStream:
             "-analyzeduration", "200000",
             "-probesize", "200000",
         ]
-        # decrypt_proxy MPEG-TS chiqaradi (RTP/HEVC ham, MPEG-PS ham) -> avtomatik aniqlanadi
+        # proxy MPEG-TS chiqaradi (RTP/HEVC ham, MPEG-PS ham) -> avtomatik aniqlanadi
         cmd += [
             "-i", url,
             # passthrough — kadrlarni takrorlamaydi (faqat haqiqiy kadrlar -> kam CPU)
