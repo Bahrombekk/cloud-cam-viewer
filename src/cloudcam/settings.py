@@ -79,9 +79,8 @@ class Settings:
         Maydon nomi UPPER_CASE ga aylantiriladi, ya'ni yangi sozlama
         qo'shilganda bu yerni tahrirlash SHART EMAS (ilgari `substream`
         aynan shu sababdan config'dan o'qilmasdan qolgan edi)."""
-        try:
-            import config as c
-        except Exception:
+        c = _load_config_module()
+        if c is None:
             return cls()
         vals = {}
         for f in fields(cls):
@@ -151,3 +150,29 @@ def get_active() -> Settings:
 def set_active(settings: Settings) -> None:
     global _active
     _active = settings
+
+
+def _load_config_module():
+    """`config.py` ni topadi: avval oddiy import, bo'lmasa JORIY papkadan.
+
+    `cloudcam` buyrug'i (console script) ishga tushganda `sys.path` da joriy
+    papka bo'lmaydi — `import config` jimgina yiqilib, CLI "Account required"
+    deb turib olardi, garchi `config.py` shu yerda bo'lsa ham."""
+    try:
+        import config
+        return config
+    except ImportError:
+        pass
+    except Exception:
+        return None
+    path = os.path.join(os.getcwd(), "config.py")
+    if not os.path.isfile(path):
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("config", path)
+    try:
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception:
+        return None
+    return mod

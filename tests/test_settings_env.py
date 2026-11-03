@@ -65,3 +65,20 @@ def test_new_settings_need_no_extra_wiring():
     `substream` aynan shu sababdan config.py'dan o'qilmay qolgan edi."""
     names = set(Settings().to_env())
     assert "CLOUDCAM_SUBSTREAM" in names and "CLOUDCAM_STREAM_MODE" in names
+
+
+def test_config_py_is_found_in_the_working_directory(tmp_path, monkeypatch):
+    """`cloudcam` console script'ida `sys.path` da joriy papka yo'q — config.py
+    baribir o'qilishi kerak (ilgari CLI uni ko'rmay "Account required" derdi)."""
+    import sys
+
+    (tmp_path / "config.py").write_text('EMAIL = "a@b.c"\nPLATFORM = "ezviz"\n',
+                                        encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    # Console script'dagidek: joriy papka ham, boshqa config.py bor papka ham yo'q.
+    monkeypatch.setattr(sys, "path", [
+        p for p in sys.path
+        if p not in ("", ".") and not (Path(p) / "config.py").is_file()])
+    monkeypatch.delitem(sys.modules, "config", raising=False)
+    s = Settings.from_config_module()
+    assert s.email == "a@b.c" and s.platform == "ezviz"
