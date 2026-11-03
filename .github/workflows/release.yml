@@ -20,7 +20,7 @@ jobs:
 
       - name: Tag must match cloudcam.__version__
         run: |
-          v=$(python -c "import re;print(re.search(r'__version__ = \"(.+?)\"', open('cloudcam/__init__.py').read()).group(1))")
+          v=$(python -c "import re;print(re.search(r'__version__ = \"(.+?)\"', open('src/cloudcam/__init__.py').read()).group(1))")
           test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
 
       - name: Build
