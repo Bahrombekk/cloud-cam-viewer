@@ -51,6 +51,9 @@ AES-encrypted with the camera's verification code. So you cannot:
   **RTP, MPEG-PS and MPEG-TS** transports, **H.264 and H.265/HEVC**, all encryption
   variants. Everything is detected per camera, so there is nothing to configure.
 - 🔑 **Gets verification codes from the cloud** (`cloudcam keys`), so you don't have to read device labels
+- 🩺 **Device health** in one request: online/offline, NVR disk state and capacity, encryption.
+  Plus **events** with decrypted pictures, live **push** (MQTT), **recordings** on the
+  SD card / NVR, and **PTZ**
 - 📷 Every device **and every NVR channel** listed as its own camera
 - 📡 **ISUP 5.0**: Hikvision devices dial out to *your* server; first frame in **0.33 s**
 - 📉 **Substream for grids** (36× less traffic) with automatic fallback to the main stream
@@ -284,6 +287,26 @@ Point the library at your bridge with `ISUP_URL`, `ISUP_TOKEN` and
 `ISUP_RTSP_BASE` in `config.py` (or `CLOUDCAM_ISUP_*`). Building the bridge
 needs Hikvision's ISUP SDK, which cannot be redistributed.
 
+### Status, events, recordings, PTZ
+
+```bash
+cloudcam status                     # online, disks, encryption; exits 1 if anything is wrong
+cloudcam events --limit 20          # recent motion/alarm events
+cloudcam events --watch --save-images ./events    # live push; pip install "cloudcam[events]"
+cloudcam records <SERIAL> --channel 2 --hours 24  # recording segments on the SD card / NVR
+cloudcam ptz <SERIAL> LEFT --duration 0.5         # move a PTZ camera
+```
+
+```
+L3473xxxx  online   clear     #3:ok/1.8TB #4:ERR1      <- a failed NVR disk
+F1803xxxx  online   clear     #1:ok/5.5TB
+```
+
+Status is per **device**: an NVR can be online while one of its cameras is unplugged.
+Event pictures are often encrypted with the same verification code as the video and
+are decrypted with the code from `cam_keys.json`. Push events register this install
+as a push client on the account, the same way the mobile app does.
+
 ### Python API
 
 The package works without `config.py` and without OpenCV:
@@ -305,6 +328,11 @@ jpeg = stream.snapshot()         # bytes
 for frame in stream.frames():    # numpy BGR
     ...
 stream.close()
+
+bad = {s: st for s, st in cam.status().items() if not st.online or not st.disks_ok}
+events, _ = cam.events(limit=10)
+with cam.push(lambda ev: print(ev.serial, ev.kind, ev.time_str)):   # cloudcam[events]
+    ...
 cam.close()
 ```
 

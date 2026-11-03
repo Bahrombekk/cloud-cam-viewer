@@ -3,6 +3,10 @@
     cloudcam cameras                 # kameralar ro'yxati
     cloudcam keys                    # tasdiqlash kodlarini bulutdan olish
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
+    cloudcam status                  # qurilmalar: onlayn, disklar, shifrlash
+    cloudcam events [--watch]        # hodisalar (--watch: jonli push, cloudcam[events])
+    cloudcam records <SERIAL>        # qurilmadagi (SD/NVR) yozuvlar
+    cloudcam ptz <SERIAL> LEFT       # PTZ kamerani burish
     cloudcam view                    # OpenCV grid ko'ruvchi (viewer kerak)
 
 Hisob ma'lumotlari: --email/--password, yoki CLOUDCAM_EMAIL/PASSWORD
@@ -14,6 +18,7 @@ import argparse
 import sys
 
 from .api import CloudCam
+from .cloud_api import PTZ_COMMANDS
 from .i18n import t
 from .settings import Settings
 
@@ -145,6 +150,113 @@ def cmd_isup(args) -> int:
     return 0
 
 
+def cmd_status(args) -> int:
+    """Qurilmalar holati: online, disklar, shifrlash — bitta bulut so'rovi."""
+    cam = _cam(args)
+    bad = 0
+    try:
+        st = cam.status(args.serial or None)
+        for serial, s in sorted(st.items()):
+            online = (t("online", "onlayn") if s.online
+                      else t("OFFLINE", "OFLAYN") if s.online is False else "?")
+            disks = " ".join(
+                f"#{d.slot}:" + (t("ok", "ok") if d.ok else t(f"ERR{d.state}", f"XATO{d.state}"))
+                + (f"/{d.capacity_mb / 1024 / 1024:.1f}TB" if d.capacity_mb else "")
+                for d in s.disks) or t("no disk", "disk yo'q")
+            enc = t("encrypted", "shifrli") if s.encrypted else t("clear", "ochiq")
+            priv = t("  PRIVACY", "  MAXFIY") if s.privacy else ""
+            print(f"{serial}  {online:<8} {enc:<9} {disks}{priv}")
+            bad += (s.online is False) + (not s.disks_ok)
+        if not st:
+            print(t("(no devices)", "(qurilma yo'q)"))
+    finally:
+        cam.close()
+    return 1 if bad else 0
+
+
+def _print_event(ev) -> None:
+    ch = f" ch{ev.channel}" if ev.channel is not None else ""
+    pic = t("  [picture]", "  [rasm]") if ev.picture_url else ""
+    print(f"{ev.time_str or '-'}  {ev.serial}{ch}  {ev.kind}  {ev.title}{pic}", flush=True)
+
+
+def _save_event_image(cam, ev, folder) -> None:
+    import os
+    import time as _time
+    try:
+        data = cam.event_image(ev)
+    except Exception as e:  # noqa: BLE001 — bitta rasm butun lentani to'xtatmasin
+        print(t(f"    image: {e}", f"    rasm: {e}"))
+        return
+    os.makedirs(folder, exist_ok=True)
+    name = f"{ev.serial}_{ev.channel or 0}_{ev.msg_id or int(_time.time())}.jpg"
+    path = os.path.join(folder, "".join(c for c in name if c.isalnum() or c in "._-"))
+    with open(path, "wb") as f:
+        f.write(data)
+    print(f"    -> {path}")
+
+
+def cmd_events(args) -> int:
+    """Hodisalar: oxirgilari, yoki `--watch` bilan jonli (push/MQTT)."""
+    cam = _cam(args)
+    try:
+        if args.watch:
+            import time as _time
+
+            def on_event(ev):
+                _print_event(ev)
+                if args.save_images and ev.picture_url:
+                    _save_event_image(cam, ev, args.save_images)
+
+            with cam.push(on_event):
+                print(t("Waiting for events (Ctrl+C to stop)...",
+                        "Hodisalar kutilmoqda (to'xtatish: Ctrl+C)..."), flush=True)
+                try:
+                    while True:
+                        _time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
+            return 0
+        evs, _ = cam.events(args.serial or None, limit=args.limit)
+        for ev in evs:
+            _print_event(ev)
+            if args.save_images and ev.picture_url:
+                _save_event_image(cam, ev, args.save_images)
+        if not evs:
+            print(t("(no events)", "(hodisa yo'q)"))
+    finally:
+        cam.close()
+    return 0
+
+
+def cmd_records(args) -> int:
+    """Qurilmadagi (SD/NVR) yozuvlar vaqt bo'yicha."""
+    import datetime as _dt
+    cam = _cam(args)
+    try:
+        end = _dt.datetime.now()
+        recs = cam.records(args.serial, args.channel, end - _dt.timedelta(hours=args.hours), end)
+        for r in recs:
+            print(f"{r.start:%Y-%m-%d %H:%M:%S} - {r.end:%H:%M:%S}  "
+                  f"{r.seconds / 60:5.1f} {t('min', 'daq')}  type={r.type}")
+        total = sum(r.seconds for r in recs) / 3600
+        print(t(f"{len(recs)} segments, {total:.1f} h recorded in the last {args.hours} h",
+                f"{len(recs)} bo'lak, oxirgi {args.hours} soatda {total:.1f} soat yozuv"))
+    finally:
+        cam.close()
+    return 0
+
+
+def cmd_ptz(args) -> int:
+    cam = _cam(args)
+    try:
+        cam.ptz(args.serial, args.command, channel=args.channel, speed=args.speed,
+                duration=args.duration)
+    finally:
+        cam.close()
+    return 0
+
+
 def cmd_view(args) -> int:
     try:
         import cv2  # noqa: F401
@@ -201,6 +313,40 @@ def main(argv=None) -> int:
                     help=t("do not fall back to ISUP_KEY (recommended)",
                            "zaxira ISUP_KEY ishlatilmasin (tavsiya etiladi)"))
     ip.set_defaults(fn=cmd_isup, isup_cmd="devices")
+
+    stp = sub.add_parser("status", help=t("device status: online, disks, encryption",
+                                          "qurilma holati: onlayn, disklar, shifrlash"))
+    stp.add_argument("serial", nargs="*", help=t("default: every device",
+                                                 "bo'sh qoldirilsa — hamma qurilma"))
+    stp.set_defaults(fn=cmd_status)
+
+    ep = sub.add_parser("events", help=t("motion/alarm events", "harakat/alarm hodisalari"))
+    ep.add_argument("serial", nargs="*")
+    ep.add_argument("--limit", type=int, default=20)
+    ep.add_argument("--watch", action="store_true",
+                    help=t("live push events (needs cloudcam[events])",
+                           "jonli push hodisalari (cloudcam[events] kerak)"))
+    ep.add_argument("--save-images", metavar="DIR", default=None,
+                    help=t("save (decrypted) event pictures here",
+                           "hodisa rasmlarini (ochib) shu papkaga saqlash"))
+    ep.set_defaults(fn=cmd_events)
+
+    rp = sub.add_parser("records", help=t("recordings on the device (SD/NVR)",
+                                          "qurilmadagi yozuvlar (SD/NVR)"))
+    rp.add_argument("serial")
+    rp.add_argument("--channel", type=int, default=1)
+    rp.add_argument("--hours", type=int, default=24)
+    rp.set_defaults(fn=cmd_records)
+
+    pp = sub.add_parser("ptz", help=t("move a PTZ camera", "PTZ kamerani burish"))
+    pp.add_argument("serial")
+    pp.add_argument("command", type=str.upper,
+                    choices=sorted(PTZ_COMMANDS))
+    pp.add_argument("--channel", type=int, default=1)
+    pp.add_argument("--speed", type=int, default=5)
+    pp.add_argument("--duration", type=float, default=0.5,
+                    help=t("seconds to move", "necha soniya harakat"))
+    pp.set_defaults(fn=cmd_ptz)
 
     vp = sub.add_parser("view", help=t("OpenCV grid viewer", "OpenCV grid ko'ruvchi"))
     vp.set_defaults(fn=cmd_view)
