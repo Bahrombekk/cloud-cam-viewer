@@ -1,4 +1,4 @@
-"""Bulutning oqimdan tashqari API'lari (`cloudcam.cloud_api`) — tarmoqsiz.
+"""Bulutning oqimdan tashqari API'lari (`cloudcam.sources.cloud.rest`) — tarmoqsiz.
 
 Javob shakllari Hik-Connect hisobidan jonli olingan namunalarga asoslangan
 (maxfiy qiymatlar olib tashlangan)."""
@@ -10,8 +10,8 @@ import zlib
 import pytest
 from Crypto.Cipher import AES
 
-from cloudcam import cloud_api as ca
-from cloudcam.vtm import image
+from cloudcam.sources.cloud import rest as ca
+from cloudcam.sources.cloud.vtm import image
 
 
 class Resp:

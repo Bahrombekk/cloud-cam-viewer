@@ -35,7 +35,7 @@ from cloudcam.decrypt_proxy import (
     open_cloud_stream,
 )
 from cloudcam.i18n import t
-from cloudcam.vtm import rtp_payload
+from cloudcam.sources.cloud.vtm import rtp_payload
 
 
 def check(client, serial, code, channel=1, timeout=30):

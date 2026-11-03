@@ -43,7 +43,7 @@ def _from_mac() -> str:
 
 def _store_path() -> str:
     """Kod saqlanadigan fayl — token fayli yonida (u ham shu o'rnatmaga tegishli)."""
-    from .settings import get_active
+    from cloudcam.settings import get_active
     tok = get_active().token_file or "token.json"
     d = os.path.dirname(os.path.abspath(tok))
     return os.path.join(d, _FILENAME)
@@ -73,7 +73,7 @@ def feature_code() -> str:
         pass
     code = _from_mac()
     try:
-        from .fsutil import write_private
+        from cloudcam.core.fsutil import write_private
         write_private(path, code)       # terminal kodi — 0600 ([[fsutil]])
     except OSError:
         pass            # yozolmasak ham ishlayveramiz — MAC baribir barqaror

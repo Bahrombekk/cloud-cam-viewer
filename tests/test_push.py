@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-from cloudcam import push
+from cloudcam.sources.cloud import push
 
 
 def _payload(ext_values, **top):

@@ -6,7 +6,7 @@ AES-ECB bilan shifrlaydi. Kalit = kamera "Tasdiqlash Kodu" (verification code),
 16 baytgacha nol bilan to'ldirilgan. Har NAL body ning birinchi 4096 baytigacha
 (to'liq 16-baytli bloklar) shifrlangan.
 
-Bulut transporti (VTM/VTDU) — [[cloudcam.vtm]]. Bu yerda biz:
+Bulut transporti (VTM/VTDU) — [[cloudcam.sources.cloud.vtm]]. Bu yerda biz:
   1) VTM dan paketlarni o'qiymiz (RTP, MPEG-PS yoki MPEG-TS — avto-aniqlanadi)
   2) RTP/HEVC va RTP/H.264 ni depaketlaymiz (VPS/SPS/PPS + FU/AP) -> Annex-B
   3) Har NAL body ni verification code bilan dekodlaymiz
@@ -29,12 +29,12 @@ from itertools import chain
 
 from Crypto.Cipher import AES
 
-from . import vtm as _vtm
-from . import vtm_cache
-from .client import CloudClient
-from .i18n import t
-from .settings import get_active
-from .vtm import STREAM_MAIN, STREAM_SUB, rtp_payload
+from cloudcam.sources.cloud import vtm as _vtm
+from cloudcam.sources.cloud import vtm_cache
+from cloudcam.sources.cloud.client import CloudClient
+from cloudcam.i18n import t
+from cloudcam.settings import get_active
+from cloudcam.sources.cloud.vtm import STREAM_MAIN, STREAM_SUB, rtp_payload
 
 # Hisob kaliti — VTM metama'lumot keshi shu kalitda ([[vtm_cache]]):
 # pagelist + VTDU token har ochilishda ~6s bulutda ketardi, kesh bilan ~0.2s.

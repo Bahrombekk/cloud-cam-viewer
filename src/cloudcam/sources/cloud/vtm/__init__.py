@@ -13,13 +13,13 @@ boshida nima o'zgartirilgani yozilgan.
   * [[cloud]]    — pagelist / VTDU token (HTTP) va ulardan oqim URL'ini yig'ish.
 """
 
-from .cloud import (
+from cloudcam.sources.cloud.vtm.cloud import (
     fetch_vtdu_token,
     fetch_vtm_page_list,
     get_cloud_stream_info,
     open_cloud_stream,
 )
-from .protocol import (
+from cloudcam.sources.cloud.vtm.protocol import (
     STREAM_MAIN,
     STREAM_SUB,
     DeviceOffline,

@@ -27,9 +27,9 @@ import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
-from .client import CloudClient
-from .settings import Settings, set_active
-from .stream_manager import StreamManager, load_cam_keys
+from cloudcam.sources.cloud.client import CloudClient
+from cloudcam.settings import Settings, set_active
+from cloudcam.stream_manager import StreamManager, load_cam_keys
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,8 @@ class CloudCam:
         yarmidan ko'p eskirgan bo'lsa yangilaydi — hisobga 2 ta bulut so'rovi."""
         if self._warmer is not None or not self.settings.warm_cache:
             return
-        from . import decrypt_proxy, vtm_cache
+        from cloudcam import decrypt_proxy
+        from cloudcam.sources.cloud import vtm_cache
         self._warmer = vtm_cache.Warmer(decrypt_proxy._make_client,
                                         decrypt_proxy._CACHE_KEY).start()
 
@@ -191,7 +192,7 @@ class CloudCam:
         `serials=None` -> hisobdagi hamma qurilma. Natija [[keys.FetchResult]];
         `needs_mfa` bo'lsa `send_key_2fa()` chaqirib, emaildagi kodni
         `mfa_code` bilan qayta chaqiring."""
-        from . import keys as _keys
+        from cloudcam.sources.cloud import keys as _keys
         if serials is None:
             serials = sorted({c.serial for c in self.cameras()})
         res = _keys.fetch(self.client, serials, mfa_code=mfa_code,
@@ -211,7 +212,8 @@ class CloudCam:
     # ── kameralar ────────────────────────────────────────────────────
     def cameras(self) -> list[Camera]:
         """Kamera ulangan kanallar ro'yxati (bo'sh NVR slotlari emas)."""
-        from . import decrypt_proxy, vtm_cache
+        from cloudcam import decrypt_proxy
+        from cloudcam.sources.cloud import vtm_cache
         # Shu hisob keshidan foydalanadi (va uni to'ldiradi) — keyingi `open()`
         # pagelist'ni bulutdan qayta so'ramaydi ([[vtm_cache.tag]]).
         vtm_cache.tag(self.client, self.settings.token_file)
@@ -247,25 +249,25 @@ class CloudCam:
                            width=width, height=height, key=key)
         return Stream(cs)
 
-    # ── holat, hodisalar, yozuvlar, PTZ ([[cloudcam.cloud_api]]) ─────
+    # ── holat, hodisalar, yozuvlar, PTZ ([[cloudcam.sources.cloud.rest]]) ─────
     def status(self, serials=None) -> dict:
         """{serial: DeviceStatus} — online, disklar, shifrlash. Bitta so'rov.
 
         `serials=None` -> hisobdagi hamma qurilma. Holat QURILMA darajasida
         (NVR online bo'lsa ham undagi alohida kamera uzilgan bo'lishi mumkin)."""
-        from . import cloud_api
+        from cloudcam.sources.cloud import rest as cloud_api
         if serials is None:
             serials = {c.serial for c in self.cameras()}
         return cloud_api.device_status(self.client, serials)
 
     def events(self, serials=None, *, limit: int = 20, cursor: str = ""):
         """Oxirgi hodisalar (harakat, odam, ...): (hodisalar, keyingi_kursor)."""
-        from . import cloud_api
+        from cloudcam.sources.cloud import rest as cloud_api
         return cloud_api.messages(self.client, serials, limit=limit, cursor=cursor)
 
     def event_image(self, event) -> bytes:
         """Hodisa rasmi; shifrlangan bo'lsa `cam_keys.json` dagi kod bilan ochiladi."""
-        from . import cloud_api
+        from cloudcam.sources.cloud import rest as cloud_api
         if not event.picture_url:
             raise ValueError("Event has no picture")
         code = load_cam_keys(self.settings.camkey_file).get(event.serial)
@@ -275,7 +277,7 @@ class CloudCam:
     def records(self, serial: str, channel: int = 1, start=None, end=None):
         """Qurilma (SD/NVR) yozuvlari: [Record(start, end, type)]. Standart — oxirgi 24 soat."""
         import datetime as _dt
-        from . import cloud_api
+        from cloudcam.sources.cloud import rest as cloud_api
         end = end or _dt.datetime.now()
         start = start or end - _dt.timedelta(days=1)
         return cloud_api.records(self.client, serial, channel, start, end)
@@ -283,7 +285,7 @@ class CloudCam:
     def ptz(self, serial: str, command: str, *, channel: int = 1, speed: int = 5,
             duration: float = 0.5) -> None:
         """PTZ: `command` (UP, DOWN, LEFT, RIGHT, ZOOMIN, ...) `duration` soniya."""
-        from . import cloud_api
+        from cloudcam.sources.cloud import rest as cloud_api
         cloud_api.ptz(self.client, serial, command, "START", channel=channel, speed=speed)
         try:
             time.sleep(max(0.0, duration))
@@ -292,17 +294,17 @@ class CloudCam:
 
     def push(self, on_event):
         """Push hodisalari (MQTT): `with cam.push(print): ...`. `cloudcam[events]` kerak."""
-        from .push import PushClient
+        from cloudcam.sources.cloud.push import PushClient
         return PushClient(self.client, on_event)
 
-    # ── ISUP 5.0 ([[cloudcam.isup]]) ─────────────────────────────────
+    # ── ISUP 5.0 ([[cloudcam.sources.isup]]) ─────────────────────────────────
     @property
     def isup(self):
         """`isup-bridge` klienti (birinchi murojaatda yaratiladi).
 
         Bulut hisobi SHART EMAS — ISUP qurilmalari bulutdan mustaqil."""
         if self._isup is None:
-            from . import isup as _isup
+            from cloudcam.sources import isup as _isup
             self._isup = _isup.from_settings(self.settings)
         return self._isup
 

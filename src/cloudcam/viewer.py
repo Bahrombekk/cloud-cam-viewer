@@ -11,8 +11,8 @@ import time
 import cv2
 import numpy as np
 
-from .i18n import t
-from .settings import get_active
+from cloudcam.i18n import t
+from cloudcam.settings import get_active
 
 
 def _grid(frames, labels, statuses):

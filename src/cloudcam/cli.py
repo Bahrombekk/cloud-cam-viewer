@@ -17,10 +17,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .api import CloudCam
-from .cloud_api import PTZ_COMMANDS
-from .i18n import t
-from .settings import Settings
+from cloudcam.api import CloudCam
+from cloudcam.sources.cloud.rest import PTZ_COMMANDS
+from cloudcam.i18n import t
+from cloudcam.settings import Settings
 
 
 def _cam(args) -> CloudCam:
@@ -105,8 +105,8 @@ def cmd_keys(args) -> int:
 
 def cmd_isup(args) -> int:
     """ISUP ko'prigi: qurilmalar, kalitlar, holat. Bulut hisobi kerak emas."""
-    from .isup import IsupError, from_settings
-    from .settings import Settings
+    from cloudcam.sources.isup import IsupError, from_settings
+    from cloudcam.settings import Settings
 
     bridge = from_settings(Settings.resolve())
     try:
@@ -263,7 +263,7 @@ def cmd_view(args) -> int:
     except ImportError:
         sys.exit(t("The viewer needs OpenCV:  pip install cloudcam[viewer]",
                    "Ko'rish uchun OpenCV kerak:  pip install cloudcam[viewer]"))
-    from . import viewer
+    from cloudcam import viewer
     return viewer.run(_cam(args), args)
 
 

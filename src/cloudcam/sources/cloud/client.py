@@ -23,9 +23,9 @@ import time
 
 import requests
 
-from .fsutil import harden, write_private
-from .i18n import t
-from .identity import feature_code
+from cloudcam.core.fsutil import harden, write_private
+from cloudcam.i18n import t
+from cloudcam.core.identity import feature_code
 
 
 def md5(text: str) -> str:
@@ -275,7 +275,7 @@ class CloudClient:
 
     @staticmethod
     def _default_token_file() -> str:
-        from .settings import get_active
+        from cloudcam.settings import get_active
         return get_active().token_file or "token.json"
 
     def refresh_session(self, allow_login=True):

@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from cloudcam.isup import IsupBridge, IsupError, IsupUnavailable
+from cloudcam.sources.isup import IsupBridge, IsupError, IsupUnavailable
 from cloudcam.settings import Settings
 
 DEVICES = {
@@ -240,7 +240,7 @@ def test_a_missing_bridge_says_so_clearly():
 
 
 def test_settings_carry_the_bridge_address():
-    from cloudcam import isup as _isup
+    from cloudcam.sources import isup as _isup
     s = Settings(isup_url="http://h:9/", isup_token="t",
                  isup_rtsp_base="rtsp://h:8554")
     b = _isup.from_settings(s)

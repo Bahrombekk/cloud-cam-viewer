@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import cloudcam
-from cloudcam import vtm_cache
+from cloudcam.sources.cloud import vtm_cache
 from cloudcam.settings import Settings, set_active
 
 PKG = Path(cloudcam.__file__).resolve().parent
@@ -98,8 +98,8 @@ class _Client:
 
 @pytest.fixture
 def fake_cloud(monkeypatch):
-    """Bulut so'rovlarini (`cloudcam.vtm.cloud.fetch_*`) soxtasi bilan almashtiradi."""
-    from cloudcam.vtm import cloud as _cloud
+    """Bulut so'rovlarini (`vtm.cloud.fetch_*`) soxtasi bilan almashtiradi."""
+    from cloudcam.sources.cloud.vtm import cloud as _cloud
 
     state = {"pagelist": {}, "calls": 0, "fail": False}
 

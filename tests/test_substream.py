@@ -16,7 +16,7 @@ import pytest
 
 import cloudcam
 from cloudcam import decrypt_proxy
-from cloudcam.vtm import STREAM_MAIN, STREAM_SUB, VtmError, build_vtm_url
+from cloudcam.sources.cloud.vtm import STREAM_MAIN, STREAM_SUB, VtmError, build_vtm_url
 
 PKG = Path(cloudcam.__file__).resolve().parent
 MGR = PKG / "stream_manager.py"

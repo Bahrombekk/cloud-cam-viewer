@@ -13,7 +13,7 @@ import sys
 
 import config
 
-from cloudcam import keys as _keys
+from cloudcam.sources.cloud import keys as _keys
 from cloudcam.i18n import t
 
 
@@ -24,7 +24,7 @@ def main():
               + ": python set_code.py <SERIAL> <CODE> [<SERIAL> <CODE> ...]")
         return
 
-    # Kutubxonaning o'zi orqali: fayl 0600 bilan atomar yoziladi ([[cloudcam.keys]]).
+    # Kutubxonaning o'zi orqali: fayl 0600 bilan atomar yoziladi ([[cloudcam.sources.cloud.keys]]).
     keys = _keys.load(config.CAMKEY_FILE)
 
     for i in range(0, len(args), 2):

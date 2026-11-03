@@ -8,8 +8,10 @@ import types
 
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy, stream_manager
-from cloudcam.client import CloudClient
+from cloudcam import decrypt_proxy
+
+from cloudcam import stream_manager
+from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.decrypt_proxy import HevcRtpDecryptor
 from cloudcam.settings import Settings
 

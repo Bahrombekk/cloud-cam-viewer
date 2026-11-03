@@ -2,13 +2,13 @@
 
 `pyezvizapi` 1.0.5.0 (`pyezvizapi/cloud_stream.py`) asosida (Apache-2.0,
 (c) Renier Moorcroft; litsenziya — `LICENSE-pyezvizapi`). O'zgarishlar:
-  * `EzvizClient` o'rniga o'zimizning [[cloudcam.client.CloudClient]] —
+  * `EzvizClient` o'rniga o'zimizning [[cloudcam.sources.cloud.client.CloudClient]] —
     pyezvizapi'ning yashirin metodlariga (`_request_json`, `_api_get_pagelist`,
     `_token`) bog'liqlik yo'q;
   * pagelist TO'LIQ sahifalab olinadi (kutubxona faqat 1-sahifani olardi —
     ko'p NVR'li hisobda kameralar topilmasdi);
   * HTTP so'rovlar (`fetch_*`) va URL yig'ish ([[get_cloud_stream_info]]) ajratilgan:
-    keshlash chaqiruvchining ishi ([[cloudcam.vtm_cache]]), modul global
+    keshlash chaqiruvchining ishi ([[cloudcam.sources.cloud.vtm_cache]]), modul global
     funksiyalarini almashtirish (monkeypatch) shart emas;
   * `authAddr` domeni tekshiriladi — `sessionId` shu manzilga yuboriladi.
 
@@ -25,8 +25,8 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from ..client import UnsafeDomain, safe_domain
-from .protocol import (
+from cloudcam.sources.cloud.client import UnsafeDomain, safe_domain
+from cloudcam.sources.cloud.vtm.protocol import (
     STREAM_MAIN,
     SocketFactory,
     VtmError,

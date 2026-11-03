@@ -1,4 +1,4 @@
-"""`cloudcam.vtm` — pyezvizapi'dan ko'chirilgan bulut transporti.
+"""`cloudcam.sources.cloud.vtm` — pyezvizapi'dan ko'chirilgan bulut transporti.
 
 Ko'chirish paytida natijalar upstream (1.0.5.0) bilan baytma-bayt solishtirilgan;
 bu testlar o'sha xatti-harakatni tarmoqsiz qo'riqlaydi.
@@ -9,8 +9,8 @@ import socket
 
 import pytest
 
-from cloudcam.vtm import DeviceOffline, VtmError, cloud
-from cloudcam.vtm import protocol as P
+from cloudcam.sources.cloud.vtm import DeviceOffline, VtmError, cloud
+from cloudcam.sources.cloud.vtm import protocol as P
 
 # ---- freymlash / protobuf ------------------------------------------------
 

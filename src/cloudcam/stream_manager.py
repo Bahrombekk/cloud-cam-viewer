@@ -20,8 +20,8 @@ import weakref
 
 import numpy as np
 
-from .i18n import t
-from .settings import get_active
+from cloudcam.i18n import t
+from cloudcam.settings import get_active
 
 # Shifr kodi proxy subprocess'iga shu muhit o'zgaruvchisi orqali uzatiladi
 # (decrypt_proxy ham shu nomni o'qiydi — ikkalasida bir xil bo'lishi shart).
@@ -69,7 +69,7 @@ def _stop_all_live():
 
 def load_cam_keys(path=None):
     """Saqlangan tasdiqlash kodlari ([[keys.load]] ustidagi eski nom)."""
-    from . import keys as _keys
+    from cloudcam.sources.cloud import keys as _keys
     return _keys.load(path)
 
 
@@ -91,7 +91,7 @@ class CameraStream:
         self.key = key  # shifrlangan kamera "Tasdiqlash Kodu" (verification code)
         # TASHQI manba (masalan ISUP ko'prigi bergan RTSP). Berilgan bo'lsa
         # lokal dekodlovchi proxy ishga tushmaydi — oqim allaqachon toza
-        # ([[cloudcam.isup]]), ffmpeg uni to'g'ridan-to'g'ri o'qiydi.
+        # ([[cloudcam.sources.isup]]), ffmpeg uni to'g'ridan-to'g'ri o'qiydi.
         self.url = url
         _s = get_active()
         self.width = width or _s.display_width
@@ -418,7 +418,7 @@ class StreamManager:
         self.streams = {}
         self.client = client  # token refresh uchun
         if settings is not None:
-            from .settings import set_active
+            from cloudcam.settings import set_active
             set_active(settings)
         self._next_port = get_active().proxy_start_port
         self._token_thread = None

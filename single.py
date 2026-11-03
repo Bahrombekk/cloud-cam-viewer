@@ -13,7 +13,7 @@ import sys
 import config
 import cv2
 
-from cloudcam.client import CloudClient
+from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.i18n import t
 from cloudcam.stream_manager import StreamManager, load_cam_keys
 

@@ -25,7 +25,7 @@ import cv2
 import numpy as np
 
 from cloudcam import decrypt_proxy
-from cloudcam.client import CloudClient
+from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.i18n import t
 from cloudcam.stream_manager import StreamManager, load_cam_keys
 

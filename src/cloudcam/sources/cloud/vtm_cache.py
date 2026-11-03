@@ -26,8 +26,8 @@ import threading
 import time
 from typing import Any
 
-from .settings import get_active
-from .vtm import cloud as _cloud
+from cloudcam.settings import get_active
+from cloudcam.sources.cloud.vtm import cloud as _cloud
 
 TTL_SECONDS = 3600.0            # kesh amal qilish muddati
 _ENV_TTL = "CLOUDCAM_VTM_TTL"

@@ -43,7 +43,7 @@ from typing import Iterable
 
 import requests
 
-from .i18n import t
+from cloudcam.i18n import t
 
 DEFAULT_URL = "http://127.0.0.1:8091"
 DEFAULT_RTSP_BASE = "rtsp://127.0.0.1:8554"
@@ -263,7 +263,7 @@ class IsupBridge:
 
 def from_settings(settings=None) -> IsupBridge:
     """Sozlamadagi manzil/token bilan ko'prik klienti."""
-    from .settings import get_active
+    from cloudcam.settings import get_active
     s = settings or get_active()
     return IsupBridge(s.isup_url, token=s.isup_token or None,
                       rtsp_base=s.isup_rtsp_base)

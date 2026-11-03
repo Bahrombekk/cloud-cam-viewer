@@ -1,6 +1,6 @@
 """Testlar uchun umumiy tayyorgarlik.
 
-Bulut transporti (`cloudcam.vtm`) loyiha ichida — tashqi kutubxona stub'i
+Bulut transporti (`cloudcam.sources.cloud.vtm`) loyiha ichida — tashqi kutubxona stub'i
 kerak emas. Bulutga chiqadigan joylar testlarning o'zida soxtasi bilan
 almashtiriladi: testlar tarmoqsiz va hisobsiz ishlaydi.
 """

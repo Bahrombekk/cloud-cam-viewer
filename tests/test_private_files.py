@@ -5,8 +5,10 @@ import stat
 
 import pytest
 
-from cloudcam import fsutil, keys
-from cloudcam.client import CloudClient
+from cloudcam.core import fsutil
+
+from cloudcam.sources.cloud import keys
+from cloudcam.sources.cloud.client import CloudClient
 
 posix = pytest.mark.skipif(os.name != "posix", reason="POSIX huquqlari faqat Linux/macOS'da")
 

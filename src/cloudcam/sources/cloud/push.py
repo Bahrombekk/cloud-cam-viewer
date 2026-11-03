@@ -26,10 +26,10 @@ from typing import Any
 
 import requests
 
-from .client import safe_domain
-from .cloud_api import Event, _epoch, _int
-from .i18n import t
-from .identity import feature_code
+from cloudcam.sources.cloud.client import safe_domain
+from cloudcam.sources.cloud.rest import Event, _epoch, _int
+from cloudcam.i18n import t
+from cloudcam.core.identity import feature_code
 
 _LOG = logging.getLogger(__name__)
 

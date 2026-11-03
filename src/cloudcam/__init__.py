@@ -13,11 +13,11 @@ Quyi darajali qismlar ham ochiq: CloudClient, StreamManager.
 
 __version__ = "0.2.0"
 
-from .api import Camera, CloudCam, Stream
-from .client import CloudClient, MfaRequired
-from .isup import IsupBridge, IsupDevice, IsupError, IsupUnavailable
-from .settings import Settings
-from .stream_manager import StreamManager, load_cam_keys
+from cloudcam.api import Camera, CloudCam, Stream
+from cloudcam.sources.cloud.client import CloudClient, MfaRequired
+from cloudcam.sources.isup import IsupBridge, IsupDevice, IsupError, IsupUnavailable
+from cloudcam.settings import Settings
+from cloudcam.stream_manager import StreamManager, load_cam_keys
 
 __all__ = [
     "CloudCam", "Stream", "Camera", "Settings",

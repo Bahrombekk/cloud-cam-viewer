@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .vtm.image import code_hash, decrypt_image, is_encrypted
+from cloudcam.sources.cloud.vtm.image import code_hash, decrypt_image, is_encrypted
 
 HTTP_TIMEOUT = 25
 _STATUS_BATCH = 50

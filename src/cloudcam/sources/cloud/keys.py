@@ -17,9 +17,9 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from .client import MfaRequired
-from .fsutil import harden, write_private
-from .settings import get_active
+from cloudcam.sources.cloud.client import MfaRequired
+from cloudcam.core.fsutil import harden, write_private
+from cloudcam.settings import get_active
 
 
 def _path(path: str | None = None) -> str:

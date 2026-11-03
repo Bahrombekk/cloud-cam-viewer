@@ -53,7 +53,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Ko'chirilgan kodning litsenziyasi paket bilan birga tarqatilishi shart (Apache-2.0 §4).
-"cloudcam.vtm" = ["LICENSE-pyezvizapi"]
+"cloudcam.sources.cloud.vtm" = ["LICENSE-pyezvizapi"]
 
 [tool.setuptools.dynamic]
 # Versiyaning yagona manbasi — src/cloudcam/__init__.py
