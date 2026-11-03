@@ -1010,6 +1010,8 @@ def _make_client():
         if m:
             client._token.setdefault("service_urls", {})["authAddr"] = \
                 f"https://{m.group(1)}auth.ezvizlife.com"
+    # Hisob kaliti MIJOZGA bog'lanadi — kesh o'rami shundan o'qiydi ([[vtm_cache.tag]]).
+    vtm_cache.tag(client)
     return client
 
 
@@ -1153,16 +1155,24 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
             def _fail_open(e):
                 """Oqim umuman ochilmadi — sababni bayroqlab, 502 qaytaramiz.
 
-                Oflayn qurilma keshni O'CHIRMAYDI — sababi
-                [[_is_missing_resource]] da: kesh HISOB bo'yicha, ya'ni bitta
-                oflayn kamera butun hisobning metama'lumotini bekor qilardi."""
+                Oflayn qurilma keshga TEGMAYDI — sababi [[_is_missing_resource]]
+                da: kesh HISOB bo'yicha, ya'ni bitta oflayn kamera butun hisobning
+                metama'lumotini bekor qilardi. Boshqa xatoda metama'lumot (VTDU
+                tokeni) eskirgan bo'lishi mumkin — kesh O'CHIRILMAYDI, bulutdan
+                YANGILANADI ([[vtm_cache.refresh]]): bulut ham xato bersa eski
+                kesh joyida qoladi va hisobdagi boshqa kameralar sekinlashmaydi."""
                 if "offline" in str(e).lower() or "unreachable" in str(e).lower():
                     _flag_offline()
                 elif _is_missing_resource(e):
                     _flag_offline()
                 else:
-                    vtm_cache.invalidate(_CACHE_KEY)   # metama'lumot eskirgan bo'lishi mumkin
+                    vtm_cache.refresh(client)          # metama'lumot eskirgan bo'lishi mumkin
                 self.send_error(502)
+
+            def _stale_list(e) -> bool:
+                """"Kamera topilmadi" — eski ro'yxat sababli bo'lishi mumkin
+                ([[vtm_cache.refresh_pagelist]]): yangilangan bo'lsa qayta urinamiz."""
+                return _is_missing_resource(e) and vtm_cache.refresh_pagelist(client, _CACHE_KEY)
 
             # "auto": avval KICHIK oqim, kadr kelmasa asosiysi ([[serve]]).
             # Har urinish uchun `set_substream` qayta chaqiriladi, chunki u
@@ -1170,38 +1180,48 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
             attempts = [("sub", STREAM_PROBE_TIMEOUT), ("main", 20.0)] if mode == "auto" \
                 else [(mode, 20.0)]
             opened = None
-            for want, tmo in attempts:
-                # Bu urinish PROBE mi (ya'ni muvaffaqiyatsizlikda keyingisi bor)
-                is_probe = want == "sub" and mode == "auto"
-                set_substream(want == "sub")
-                try:
-                    cm = open_cloud_stream(client, serial, channel=channel,
-                                           client_type=9, refresh_vtm=False, timeout=tmo)
-                except Exception as e:
-                    if is_probe:
-                        continue                      # substream yo'q — asosiysini sinaymiz
-                    _fail_open(e)
-                    return
-                try:
-                    stream = cm.__enter__()
-                    stream.start()
-                    pkts = stream.iter_packets()
-                    primed = _prime(pkts)
-                except Exception as e:
+            for round_ in range(2):               # 2-davra: ro'yxat yangilangandan keyin
+                retry = False
+                for want, tmo in attempts:
+                    # Bu urinish PROBE mi (ya'ni muvaffaqiyatsizlikda keyingisi bor)
+                    is_probe = want == "sub" and mode == "auto"
+                    set_substream(want == "sub")
                     try:
-                        cm.__exit__(None, None, None)
-                    except Exception:
-                        pass
-                    if is_probe:
-                        continue                      # soket jim qoldi — asosiysiga
-                    # Bu yo'l tashqi `except` ga YETMAYDI (u quyiroqda
-                    # boshlanadi), shuning uchun shu yerda hal qilamiz.
-                    _fail_open(e)
-                    return
-                if primed[0] or not is_probe:
-                    opened = (cm, stream, pkts, primed)
+                        cm = open_cloud_stream(client, serial, channel=channel,
+                                               client_type=9, refresh_vtm=False, timeout=tmo)
+                    except Exception as e:
+                        if is_probe:
+                            continue                  # substream yo'q — asosiysini sinaymiz
+                        if round_ == 0 and _stale_list(e):
+                            retry = True
+                            break
+                        _fail_open(e)
+                        return
+                    try:
+                        stream = cm.__enter__()
+                        stream.start()
+                        pkts = stream.iter_packets()
+                        primed = _prime(pkts)
+                    except Exception as e:
+                        try:
+                            cm.__exit__(None, None, None)
+                        except Exception:
+                            pass
+                        if is_probe:
+                            continue                  # soket jim qoldi — asosiysiga
+                        if round_ == 0 and _stale_list(e):
+                            retry = True
+                            break
+                        # Bu yo'l tashqi `except` ga YETMAYDI (u quyiroqda
+                        # boshlanadi), shuning uchun shu yerda hal qilamiz.
+                        _fail_open(e)
+                        return
+                    if primed[0] or not is_probe:
+                        opened = (cm, stream, pkts, primed)
+                        break
+                    cm.__exit__(None, None, None)     # substream bo'sh — keyingi urinish
+                if not retry:
                     break
-                cm.__exit__(None, None, None)         # substream bo'sh — keyingi urinish
 
             if opened is None:
                 self.send_error(502)
@@ -1264,7 +1284,8 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                     # Bitta ham paket kelmadi -> keshdagi metama'lumot (VTDU
                     # tokeni) eskirgan bo'lishi mumkin. Paket kelgan bo'lsa
                     # kesh TO'G'RI edi — uzilish boshqa sababdan, tegmaymiz.
-                    vtm_cache.invalidate(_CACHE_KEY)
+                    # O'chirmaymiz, YANGILAYMIZ ([[vtm_cache.refresh]]).
+                    vtm_cache.refresh(client)
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True

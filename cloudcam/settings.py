@@ -60,6 +60,8 @@ class Settings:
     stream_mode: str = "main"
     token_file: str = "token.json"
     camkey_file: str = "cam_keys.json"
+    # Hisob metama'lumot keshini (VTM) fonda issiq tutish — ochilish ~6s o'rniga ~0.2s.
+    warm_cache: bool = True
     # ── ISUP 5.0 ([[isup]]) ───────────────────────────────────────────
     # Qurilma bulutga emas, `isup-bridge` ga ulanadi. Ko'prik alohida
     # jarayon (ffmpeg kabi tashqi bog'liqlik) — bu yerda faqat uning

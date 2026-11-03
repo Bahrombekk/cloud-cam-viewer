@@ -67,23 +67,129 @@ def test_channel_gate_stays_silent_when_unsure():
     assert vtm_cache.channel_missing("acc", "BOSHQA", 1) is False     # seriya yo'q
 
 
-def test_cache_is_only_invalidated_when_no_packets_arrived():
-    """Manba matnini qo'riqlaymiz: `invalidate` chaqiruvi `got_packets`
-    shartisiz qolsa, bitta kameraning uzilishi butun hisobni sekinlashtiradi.
+def test_cache_is_refreshed_not_emptied_and_only_when_no_packets_arrived():
+    """Manba matnini qo'riqlaymiz.
 
-    Ruxsat etilgan ikki kontekst:
-      * `not got_packets` sharti — oqim ochilgan, lekin paket kelmagan;
-      * `_fail_open` — oqim UMUMAN ochilmagan, ya'ni paket bo'lishi mumkin emas.
-    """
+    * Proksi keshni HECH QACHON o'chirmaydi (`invalidate`) — bulut xato bersa
+      bo'sh kesh hisobdagi hamma kamerani ~6s sekinlashtirardi; o'rniga
+      `refresh` (kesh faqat muvaffaqiyatda almashadi).
+    * `refresh` faqat paket kelmaganda: `not got_packets` sharti yoki `_fail_open`
+      (oqim UMUMAN ochilmagan)."""
     text = SRC.read_text(encoding="utf-8")
-    calls = [m for m in re.finditer(r"vtm_cache\.invalidate\(", text)]
-    assert calls, "kesh umuman bekor qilinmayapti"
-    safe = ("not got_packets", "except Exception as e", "def _fail_open")
+    assert not re.search(r"vtm_cache\.invalidate\(", text), \
+        "proksi keshni o'chirmasin — vtm_cache.refresh ishlating"
+    calls = list(re.finditer(r"vtm_cache\.refresh\(", text))
+    assert calls, "eskirgan metama'lumot umuman yangilanmayapti"
+    safe = ("not got_packets", "def _fail_open")
     for m in calls:
         line_start = text.rfind("\n", 0, m.start())
-        context = text[max(0, line_start - 600):m.start()]
+        context = text[max(0, line_start - 900):m.start()]
         assert any(k in context for k in safe), \
-            "invalidate() himoyasiz joyda chaqirilgan"
+            "refresh() himoyasiz joyda chaqirilgan"
+
+
+# ---- o'ram: hisob MIJOZGA bog'langan, zanjirlanmaydi ----------------------
+
+class _Client:
+    pass
+
+
+@pytest.fixture
+def fake_cloud(monkeypatch):
+    """pyezvizapi'ning ichki funksiyalarini soxtasi bilan almashtiradi va
+    o'ramni ularning USTIGA yangidan o'rnatadi."""
+    import pyezvizapi.cloud_stream as _cs
+
+    state = {"pagelist": {}, "calls": 0, "fail": False}
+
+    def pagelist(client):
+        state["calls"] += 1
+        if state["fail"]:
+            raise RuntimeError("504 Gateway Timeout")
+        return state["pagelist"][client.account]
+
+    def vtdu(client, *a, **kw):
+        return {"token": client.account}
+
+    monkeypatch.setattr(_cs, "get_vtm_page_list", pagelist)
+    monkeypatch.setattr(_cs, "get_vtdu_token_v2", vtdu)
+    vtm_cache.install()
+    return _cs, state
+
+
+def _client(account, tmp_path):
+    c = _Client()
+    c.account = account
+    vtm_cache.tag(c, str(tmp_path / f"{account}.json"))
+    return c
+
+
+def test_two_accounts_in_one_process_do_not_chain(fake_cloud, tmp_path):
+    """Ikkinchi hisob birinchisining qurilma ro'yxatini OLMASLIGI kerak
+    (central-server'da 4 hisobdan 3 tasi bir xil ro'yxatni ko'rardi)."""
+    _cs, state = fake_cloud
+    state["pagelist"] = {"A": {"res": ["camA"]}, "B": {"res": ["camB"]}}
+    vtm_cache.install(str(tmp_path / "A.json"))
+    vtm_cache.install(str(tmp_path / "B.json"))          # qayta o'rnatish — zanjir yo'q
+    a, b = _client("A", tmp_path), _client("B", tmp_path)
+    assert _cs.get_vtm_page_list(a) == {"res": ["camA"]}
+    assert _cs.get_vtm_page_list(b) == {"res": ["camB"]}
+    assert vtm_cache.load("B", "pagelist") == {"res": ["camB"]}
+    assert vtm_cache.load("A", "pagelist") == {"res": ["camA"]}
+
+
+def test_untagged_client_is_not_cached(fake_cloud):
+    _cs, state = fake_cloud
+    state["pagelist"] = {"X": {"res": [1]}}
+    c = _Client()
+    c.account = "X"
+    _cs.get_vtm_page_list(c)
+    _cs.get_vtm_page_list(c)
+    assert state["calls"] == 2                             # kesh yo'q — begona hisobga yozilmaydi
+
+
+def test_refresh_keeps_old_cache_when_cloud_fails(fake_cloud, tmp_path):
+    """Bulut xato bersa eski kesh JOYIDA qoladi (ilgari invalidate uni bo'shatardi)."""
+    _cs, state = fake_cloud
+    state["pagelist"] = {"A": {"res": ["old"]}}
+    a = _client("A", tmp_path)
+    _cs.get_vtm_page_list(a)
+    state["fail"] = True
+    assert vtm_cache.refresh(a) is False
+    assert vtm_cache.load("A", "pagelist") == {"res": ["old"]}
+    state["fail"] = False
+    state["pagelist"] = {"A": {"res": ["new"]}}
+    assert vtm_cache.refresh(a) is True                    # bypass_read: keshni chetlab bulutga
+    assert vtm_cache.load("A", "pagelist") == {"res": ["new"]}
+
+
+def test_new_camera_found_by_one_pagelist_refresh(fake_cloud, tmp_path, monkeypatch):
+    """Hisobga yangi qo'shilgan kamera eski keshda yo'q — bitta yangilash uni topadi,
+    lekin yangi ro'yxat qayta-qayta so'ralmaydi (oflayn kameralar bulutni urmasin)."""
+    _cs, state = fake_cloud
+    state["pagelist"] = {"A": {"res": ["cam1"]}}
+    a = _client("A", tmp_path)
+    _cs.get_vtm_page_list(a)
+    state["pagelist"] = {"A": {"res": ["cam1", "cam2"]}}
+    assert vtm_cache.refresh_pagelist(a, "A") is False     # ro'yxat juda yangi (< 30s)
+    real_age = vtm_cache.age
+    monkeypatch.setattr(vtm_cache, "age", lambda k, kind: 120.0)
+    assert vtm_cache.refresh_pagelist(a, "A") is True
+    monkeypatch.setattr(vtm_cache, "age", real_age)
+    assert vtm_cache.load("A", "pagelist") == {"res": ["cam1", "cam2"]}
+
+
+def test_warm_only_when_half_expired(fake_cloud, tmp_path, monkeypatch):
+    _cs, state = fake_cloud
+    state["pagelist"] = {"A": {"res": [1]}}
+    a = _client("A", tmp_path)
+    _cs.get_vtm_page_list(a)
+    calls = state["calls"]
+    assert vtm_cache.warm(a, "A") is False                 # yangi kesh — tegmaydi
+    assert state["calls"] == calls
+    monkeypatch.setattr(vtm_cache, "age", lambda k, kind: vtm_cache._ttl())
+    assert vtm_cache.warm(a, "A") is True
+    assert state["calls"] == calls + 1
 
 
 def test_open_failure_handler_never_runs_after_streaming_started():
@@ -111,3 +217,36 @@ def test_cache_file_is_atomic_json():
     blob = json.loads(p.read_text(encoding="utf-8"))
     assert "ts" in blob and blob["data"] == {"a": 1}
     assert not list(p.parent.glob("*.tmp")), "vaqtinchalik fayl qoldi"
+
+
+def test_cloudcam_starts_and_stops_warmer(monkeypatch, tmp_path):
+    """Login'dan keyin kesh fonda issiq tutiladi; `warm_cache=False` o'chiradi."""
+    from cloudcam import api
+
+    started = []
+
+    class _W:
+        def __init__(self, make_client, key, interval=None):
+            self.key = key
+
+        def start(self):
+            started.append(self.key)
+            return self
+
+        def stop(self):
+            started.append("stop")
+
+    monkeypatch.setattr(vtm_cache, "Warmer", _W)
+    cam = api.CloudCam(token_file=str(tmp_path / "token.json"))
+    monkeypatch.setattr(cam.client, "connect", lambda tf: "resumed")
+    cam.login()
+    assert len(started) == 1
+    cam.login()                                   # ikkinchi marta — yangi thread yo'q
+    assert len(started) == 1
+    cam.close()
+    assert started[-1] == "stop"
+
+    off = api.CloudCam(token_file=str(tmp_path / "token.json"), warm_cache=False)
+    monkeypatch.setattr(off.client, "connect", lambda tf: "resumed")
+    off.login()
+    assert len(started) == 2                      # faqat oldingi stop qo'shilgan

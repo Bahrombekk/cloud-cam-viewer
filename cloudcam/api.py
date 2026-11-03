@@ -144,6 +144,20 @@ class CloudCam:
         self.auth_mode: Optional[str] = None   # "resumed" | "refreshed" | "login"
         self._key_fetch_blocked = False        # 2FA ko'tarilmagan -> avto-olishni to'xtatamiz
         self._isup = None                      # kech yaratiladi ([[isup]])
+        self._warmer = None                    # VTM keshini fonda issiq tutadi
+
+    def _start_cache_warmer(self) -> None:
+        """Hisob metama'lumot keshini fonda issiq tutish ([[vtm_cache.Warmer]]).
+
+        Kesh 1 soat yashaydi; kameralar doim ochiq turmaydi, shuning uchun TTL
+        ochilishlar orasida tugab, keyingi ochilish ~6s bulut so'roviga tushardi
+        (central-server o'lchovi: issiq 0.14s, sovuq 6.08s). Har TTL/4 da tekshirib,
+        yarmidan ko'p eskirgan bo'lsa yangilaydi — hisobga 2 ta bulut so'rovi."""
+        if self._warmer is not None or not self.settings.warm_cache:
+            return
+        from . import decrypt_proxy, vtm_cache
+        self._warmer = vtm_cache.Warmer(decrypt_proxy._make_client,
+                                        decrypt_proxy._CACHE_KEY).start()
 
     # ── hisob ────────────────────────────────────────────────────────
     def login(self, *, force: bool = False) -> "CloudCam":
@@ -163,6 +177,7 @@ class CloudCam:
         else:
             self.auth_mode = self.client.connect(self.settings.token_file)
         self._logged_in = True
+        self._start_cache_warmer()
         return self
 
     def refresh_token(self) -> None:
@@ -266,6 +281,9 @@ class CloudCam:
         return Stream(cs)
 
     def close(self) -> None:
+        if self._warmer is not None:
+            self._warmer.stop()
+            self._warmer = None
         if self._isup is not None:
             try:
                 self._isup.want(replace=True)   # ko'prik oqimlarni yopsin

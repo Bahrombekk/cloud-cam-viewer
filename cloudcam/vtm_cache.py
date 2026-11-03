@@ -18,9 +18,11 @@ metama'lumot yuklardi. Bitta paket kelgan bo'lsa — kesh to'g'ri edi.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
+import threading
 import time
 from typing import Any
 
@@ -56,7 +58,9 @@ def _path(key: str, kind: str) -> str:
 
 
 def load(key: str, kind: str) -> Any | None:
-    """Kesh yangi bo'lsa qiymat, aks holda None."""
+    """Kesh yangi bo'lsa qiymat, aks holda None ([[bypass_read]] ichida doim None)."""
+    if getattr(_tls, "bypass", False):
+        return None
     try:
         with open(_path(key, kind), encoding="utf-8") as f:
             blob = json.load(f)
@@ -147,41 +151,171 @@ def channel_missing(key: str, serial: str, channel: int) -> bool:
     if not real:
         return False
     return channel not in have
-
-
 # ---- pyezvizapi'ni kesh bilan o'rash --------------------------------------
+#
+# O'ram BIR MARTA o'rnatiladi va hisob kalitini MIJOZ obyektidan o'qiydi
+# ([[tag]]). Ilgari har `install()` (boshqa hisob bilan) o'ramni QAYTA qo'yar va
+# kalitni closure'dan olardi — bir jarayonda ikki hisob bo'lsa o'ramlar
+# ZANJIRLANARDI: B ning keshi bo'sh -> ichki = A ning o'rami -> A keshi to'la ->
+# A ning qurilmalari qaytadi -> B keshiga YOZILADI. central-server'da jonli
+# o'lchangan: 4 hisobdan 3 tasida bir xil ro'yxat yotardi va o'z hisobida yo'q
+# kameralar "oflayn" ko'rinardi.
+
+_KEY_ATTR = "_cloudcam_cache_key"
+_WRAPPED_ATTR = "_cloudcam_wrapped"
+
+_tls = threading.local()
+
+
+@contextlib.contextmanager
+def bypass_read():
+    """Shu THREAD ichida [[load]] doim None qaytaradi — kesh O'QILMAYDI.
+
+    Keshni yangilash uchun: o'ram hali yaroqli eski qiymatni qaytarmasin, bulutga
+    borsin. Ilgari buning o'rniga `invalidate()` qilinardi — bulut xato bersa
+    (504) kesh BO'SH qolar va o'sha hisobdagi har kamera ~6s ortiq ochilardi.
+    Endi kesh FAQAT muvaffaqiyatli javob bilan almashadi."""
+    prev = getattr(_tls, "bypass", False)
+    _tls.bypass = True
+    try:
+        yield
+    finally:
+        _tls.bypass = prev
+
+
+def tag(client: Any, token_file: str | None = None) -> str:
+    """Mijozni hisob kaliti bilan belgilaydi (o'ram shu kalitda keshlaydi)."""
+    key = account_key(token_file)
+    try:
+        setattr(client, _KEY_ATTR, key)
+    except Exception:  # noqa: BLE001 — slots/proxy obyekt: keshsiz ishlaydi
+        pass
+    return key
+
 
 def install(token_file: str | None = None) -> str:
     """`get_vtm_page_list` va `get_vtdu_token_v2` ustiga keshni o'rnatadi.
 
     Sahifalovchi patch USTIGA qo'yiladi — kesh bo'sh bo'lsa baribir TO'LIQ
-    (ko'p sahifali) ro'yxat olinadi. Qaytaradi: hisob kaliti (invalidate uchun).
+    (ko'p sahifali) ro'yxat olinadi. Belgilanmagan ([[tag]]) mijoz keshsiz
+    o'tadi — noma'lum hisobni boshqa hisob keshiga yozishdan ko'ra yaxshi.
+    Qaytaradi: hisob kaliti (invalidate uchun).
     """
     import pyezvizapi.cloud_stream as _cs
 
     key = account_key(token_file)
-    if getattr(_cs, "_cloudcam_cache_key", None) == key:
-        return key                            # allaqachon o'rnatilgan
+    if getattr(_cs.get_vtm_page_list, _WRAPPED_ATTR, False):
+        return key                            # o'ram allaqachon bor (bitta)
     inner_pagelist = _cs.get_vtm_page_list
     inner_vtdu = _cs.get_vtdu_token_v2
 
     def _cached_pagelist(client):
-        hit = load(key, "pagelist")
+        k = getattr(client, _KEY_ATTR, None)
+        if not k:
+            return inner_pagelist(client)
+        hit = load(k, "pagelist")
         if hit is not None:
             return hit
         data = inner_pagelist(client)
-        store(key, "pagelist", data)
+        store(k, "pagelist", data)
         return data
 
     def _cached_vtdu(client, *a, **kw):
-        hit = load(key, "vtdu")
+        k = getattr(client, _KEY_ATTR, None)
+        if not k:
+            return inner_vtdu(client, *a, **kw)
+        hit = load(k, "vtdu")
         if hit is not None:
             return hit
         data = inner_vtdu(client, *a, **kw)
-        store(key, "vtdu", data)
+        store(k, "vtdu", data)
         return data
 
+    setattr(_cached_pagelist, _WRAPPED_ATTR, True)
+    setattr(_cached_vtdu, _WRAPPED_ATTR, True)
     _cs.get_vtm_page_list = _cached_pagelist
     _cs.get_vtdu_token_v2 = _cached_vtdu
-    _cs._cloudcam_cache_key = key
     return key
+
+
+# ---- Keshni yangilash (o'chirmasdan) --------------------------------------
+
+PAGELIST_REFRESH_FLOOR = 30.0   # shundan yosh ro'yxat qayta so'ralmaydi
+
+
+def refresh(client: Any, kinds: tuple[str, ...] = ("pagelist", "vtdu")) -> bool:
+    """Metama'lumotni BULUTDAN qayta oladi; kesh faqat muvaffaqiyatda almashadi.
+
+    Oqim ochilmaganda keshni o'chirish (`invalidate`) o'rniga shu: VTDU tokeni
+    eskirgan bo'lsa yangisi yoziladi, bulut xato bersa eski kesh joyida qoladi."""
+    import pyezvizapi.cloud_stream as _cs
+
+    try:
+        with bypass_read():
+            if "pagelist" in kinds:
+                _cs.get_vtm_page_list(client)
+            if "vtdu" in kinds:
+                _cs.get_vtdu_token_v2(client)
+        return True
+    except Exception:  # noqa: BLE001 — "best effort"
+        return False
+
+
+def refresh_pagelist(client: Any, key: str) -> bool:
+    """Qurilma ro'yxatini yangilaydi — "kamera topilmadi" ni OFLAYN deyishdan oldin.
+
+    Kesh HISOB bo'yicha va 1 soat yashaydi: hisobga YANGI kamera qo'shilsa,
+    keshdagi ro'yxatda u yo'q va bulut `Could not find VTM resource` beradi —
+    bu oflayn qurilma bilan bir xil ko'rinadi, kamera esa TTL tugaguncha
+    "oflayn" bo'lib qolardi. central-server'da jonli o'lchangan (keshda 18
+    resurs, bulutda 19 — farq aynan shu kamera; yangilangach darhol ochildi).
+
+    True — ro'yxat haqiqatan yangilandi (qayta urinish ma'noli). Yangi ro'yxat
+    [[PAGELIST_REFRESH_FLOOR]] dan yosh bo'lsa so'ralmaydi: oflayn kameralarni
+    ketma-ket bosish bulutni urmasin."""
+    a = age(key, "pagelist")
+    if a is not None and a < PAGELIST_REFRESH_FLOOR:
+        return False
+    return refresh(client, ("pagelist",))
+
+
+def warm(client: Any, key: str) -> bool:
+    """Kesh yarmidan ko'p eskirgan bo'lsa fonda yangilaydi ([[Warmer]]).
+
+    Real foydalanishda kameralar doim ochiq turmaydi — 1 soatlik TTL ochilishlar
+    orasida tugab, keyingi ochilish ~6s metama'lumot so'roviga tushardi.
+    central-server o'lchovi: issiq kesh 0.14s, sovuq 6.08s."""
+    a = age(key, "pagelist")
+    if a is not None and a < _ttl() / 2:
+        return False
+    return refresh(client)
+
+
+class Warmer:
+    """Asosiy jarayonda VTM keshini fonda issiq tutadi (daemon thread)."""
+
+    def __init__(self, make_client, key: str, interval: float | None = None):
+        self._make_client = make_client
+        self._key = key
+        self._interval = interval or max(60.0, _ttl() / 4)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> "Warmer":
+        if self._thread is None or not self._thread.is_alive():
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._run, name="vtm-warmer",
+                                            daemon=True)
+            self._thread.start()
+        return self
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                warm(self._make_client(), self._key)
+            except Exception:  # noqa: BLE001 — fon vazifasi viewer'ni yiqitmasin
+                pass
+            self._stop.wait(self._interval)
+
+    def stop(self) -> None:
+        self._stop.set()

@@ -112,10 +112,16 @@ narsadan oldin turadi, chunki upstream bitta relizda loyihani **jimgina** buzish
 
 Birinchi kadrgacha vaqtni haqiqatan quyidagilar belgilaydi:
 
-- [ ] **VTM keshni proaktiv qilish** — `vtm_cache.py`, `client.connect()`
-  - Kesh faqat birinchi ochilishda to'ladi, TTL (3600s) dan keyin sovaydi → yana ~6s
-    (o'lchangan: issiq 0.24s / sovuq 5.76s). `connect()` dan keyin `pagelist`+`vtdu` ni
-    oldindan chaqirish; fonda ~50 daqiqada bir yangilash (stale-while-revalidate).
+- [x] **VTM keshni proaktiv qilish** — BAJARILDI (`central-server` dan ko'chirildi)
+  - `vtm_cache.Warmer` login'dan keyin fonda har TTL/4 da tekshiradi, yarmidan ko'p
+    eskirgan keshni yangilaydi (`Settings.warm_cache`, standart yoqiq).
+  - Yangilash `bypass_read` bilan: kesh FAQAT muvaffaqiyatda almashadi — bulut xatosi
+    (504) keshni bo'shatmaydi. Proksi ham endi `invalidate` emas, `refresh` qiladi.
+  - Hisobga YANGI qo'shilgan kamera: "Could not find VTM resource" da ro'yxat bir marta
+    yangilanib qayta urinadi (ilgari TTL tugaguncha — 1 soatgacha — "oflayn" edi).
+  - O'ram mijozga bog'langan (`vtm_cache.tag`) — bir jarayonda ikki hisob bo'lsa
+    zanjirlanib, B hisobi A ning qurilma ro'yxatini olardi.
+  - central-server o'lchovi: issiq 0.14s / sovuq 6.08s.
 - [ ] **Single-flight** — `vtm_cache.py`
   - Bir vaqtda ko'p kamera sovuq keshda ochilsa, har biri alohida `pagelist` so'rovini otadi
     (thundering herd). Bitta uchuvchi so'rov qolganlarni kutdirsin.
