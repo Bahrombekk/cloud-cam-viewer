@@ -23,6 +23,12 @@ jobs:
           v=$(python -c "import re;print(re.search(r'__version__ = \"(.+?)\"', open('src/cloudcam/__init__.py').read()).group(1))")
           test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
 
+      - name: Lint and test before publishing
+        run: |
+          pip install -e ".[dev]"
+          ruff check .
+          pytest
+
       - name: Build
         run: pip install build && python -m build
 
