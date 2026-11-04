@@ -35,7 +35,12 @@ def test_store_and_load_roundtrip():
 
 def test_expired_entry_is_ignored(monkeypatch):
     vtm_cache.store("acc", "vtdu", {"t": 1})
-    monkeypatch.setenv("CLOUDCAM_VTM_TTL", "0")
+    monkeypatch.setenv("CLOUDCAM_VTM_TTL", "5")
+    # Soatni oldinga suramiz. Ilgari TTL=0 bilan darhol o'qilardi: Windows/py3.10
+    # da `time.time()` ~15 ms qadamli, yozish va o'qish bir xil vaqtni olib,
+    # yosh 0 chiqardi va test tasodifan yiqilardi (CI, windows-latest py3.10).
+    real = vtm_cache.time.time
+    monkeypatch.setattr(vtm_cache.time, "time", lambda: real() + 10)
     assert vtm_cache.load("acc", "vtdu") is None
 
 
