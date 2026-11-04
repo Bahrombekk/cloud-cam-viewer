@@ -110,3 +110,39 @@ def test_broken_store_does_not_crash():
     from cloudcam.settings import get_active
     open(get_active().camkey_file, "w", encoding="utf-8").write("{buzuq")
     assert keys.load() == {}
+
+
+# ---- buzuq fayl ustidan YOZILMAYDI ---------------------------------------
+# Qo'lda tahrirlangan faylda bitta ortiqcha vergul `load()` ni `{}` ga
+# aylantirardi va keyingi `save()` HAMMA kodni o'chirib yuborardi.
+
+def _broken_store():
+    from cloudcam.settings import get_active
+    p = get_active().camkey_file
+    text = '{"AA111": "ABCDEF", "BB222": "GHIJKL",}'
+    open(p, "w", encoding="utf-8").write(text)
+    return p, text
+
+
+def test_set_code_refuses_to_overwrite_an_unreadable_store():
+    p, text = _broken_store()
+    with pytest.raises(keys.KeysFileError):
+        keys.set_code("CC333", "XYZXYZ")
+    assert open(p, encoding="utf-8").read() == text, "kodlar o'chib ketdi"
+
+
+def test_fetch_refuses_before_asking_the_cloud():
+    p, text = _broken_store()
+    c = FakeClient(needs_mfa=False)
+    with pytest.raises(keys.KeysFileError):
+        keys.fetch(c, ["DD444"])
+    assert c.calls == [], "yozib bo'lmasa bulutdan so'ramaslik kerak"
+    assert open(p, encoding="utf-8").read() == text
+
+
+def test_non_object_store_is_also_refused():
+    from cloudcam.settings import get_active
+    open(get_active().camkey_file, "w", encoding="utf-8").write('["AA111"]')
+    assert keys.load() == {}
+    with pytest.raises(keys.KeysFileError):
+        keys.set_code("CC333", "XYZXYZ")

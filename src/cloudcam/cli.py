@@ -87,10 +87,14 @@ def cmd_snapshot(args) -> int:
 
 def cmd_keys(args) -> int:
     """Tasdiqlash kodlarini bulutdan olib `cam_keys.json` ga saqlaydi."""
+    from cloudcam.sources.cloud.keys import KeysFileError
     cam = _cam(args)
     try:
         serials = args.serial or None
-        res = cam.fetch_keys(serials, mfa_code=args.code, overwrite=args.overwrite)
+        try:
+            res = cam.fetch_keys(serials, mfa_code=args.code, overwrite=args.overwrite)
+        except KeysFileError as e:
+            sys.exit(str(e))
         if res.needs_mfa:
             info = cam.send_key_2fa()
             where = (info.get("contact") or {}).get("fuzzyContact",

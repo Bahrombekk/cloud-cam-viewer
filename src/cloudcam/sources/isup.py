@@ -242,10 +242,13 @@ class IsupBridge:
         24/7 asosiy oqimda tursa 420 Mbit/s bo'lardi. ISUP'da oqim ~0.23 s da
         ochilgani uchun uni faqat KO'RILAYOTGANDA ochish sezilmaydi.
         """
+        # Avval HAMMASI tekshiriladi, keyin ro'yxat o'zgaradi: yaroqsiz ID
+        # `_wanted` ga tushib qolsa, keyingi har `want()`/`unwant()` (to'g'ri
+        # ID bilan ham) shu ID tufayli yiqilardi.
+        new = {(_token(dev, "device id"), int(ch)): bool(sub) for dev, ch, sub in streams}
         if replace:
             self._wanted.clear()
-        for dev, ch, sub in streams:
-            self._wanted[(str(dev), int(ch))] = bool(sub)
+        self._wanted.update(new)
         return self._flush_want()
 
     def unwant(self, *streams: tuple[str, int]) -> dict:
@@ -271,7 +274,11 @@ class IsupBridge:
 
         Bu oddiy RTSP — dekodlovchi proxy ham, tasdiqlash kodi ham kerak emas.
         """
-        path = f"isup/{device_id}/{int(channel)}"
+        dev = _token(device_id, "device id")
+        if "/" in dev or "?" in dev or "#" in dev:     # RTSP yo'lini buzmasin
+            raise IsupError(t(f"Invalid device id: {dev[:20]!r}",
+                              f"Yaroqsiz device id: {dev[:20]!r}"))
+        path = f"isup/{dev}/{int(channel)}"
         return f"{self.rtsp_base}/{path}/sub" if sub else f"{self.rtsp_base}/{path}"
 
 

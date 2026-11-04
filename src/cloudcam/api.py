@@ -155,9 +155,12 @@ class CloudCam:
         yarmidan ko'p eskirgan bo'lsa yangilaydi — hisobga 2 ta bulut so'rovi."""
         if self._warmer is not None or not self.settings.warm_cache:
             return
-        from cloudcam.sources.cloud import proxy, stream, vtm_cache
-        self._warmer = vtm_cache.Warmer(stream._make_client,
-                                        proxy._CACHE_KEY).start()
+        from cloudcam.sources.cloud import stream, vtm_cache
+        # SHU hisob: `proxy._CACHE_KEY` import paytidagi faol sozlamadan
+        # hisoblanadi — ikkinchi `CloudCam` da boshqa hisobni isitardi.
+        s = self.settings
+        self._warmer = vtm_cache.Warmer(lambda: stream._make_client(s),
+                                        vtm_cache.account_key(s.token_file)).start()
 
     # ── hisob ────────────────────────────────────────────────────────
     def login(self, *, force: bool = False) -> "CloudCam":

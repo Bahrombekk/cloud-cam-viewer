@@ -60,6 +60,22 @@ def _stop_proc(proc, timeout=3.0):
             pass
 
 
+def _port_busy(port: int) -> bool:
+    """Portda kimdir TINGLAYAPTIMI (127.0.0.1)."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+def _free_port() -> int:
+    """OS bergan bo'sh port (bog'lab, darhol bo'shatamiz)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sk:
+        sk.bind(("127.0.0.1", 0))
+        return sk.getsockname()[1]
+
+
 # Ishlab turgan oqimlar — dastur chiqishida (atexit) proxy/ffmpeg qolmasin.
 _LIVE = weakref.WeakSet()
 
@@ -86,7 +102,7 @@ class CameraStream:
     OFFLINE_BACKOFF_MAX = 60.0   # oflayn kamerani qayta sinash oralig'i (maks)
 
     def __init__(self, serial, channel, port, decrypt=False,
-                 width=None, height=None, key=None, url=None):
+                 width=None, height=None, key=None, url=None, settings=None):
         self.serial = serial
         self.channel = channel
         self.port = port
@@ -96,7 +112,12 @@ class CameraStream:
         # lokal dekodlovchi proxy ishga tushmaydi — oqim allaqachon toza
         # ([[cloudcam.sources.isup]]), ffmpeg uni to'g'ridan-to'g'ri o'qiydi.
         self.url = url
-        _s = get_active()
+        # Sozlama YARATILISH paytida qotiriladi. Ilgari har qayta ulanishda
+        # global `get_active()` o'qilardi: bitta jarayonda ikkinchi `CloudCam`
+        # ochilsa, birinchi hisob kamerasi qayta ulanganda IKKINCHI hisobning
+        # token fayli / platformasi bilan proxy ishga tushardi.
+        self.settings = settings or get_active()
+        _s = self.settings
         self.width = width or _s.display_width
         self.height = height or _s.display_height
 
@@ -122,12 +143,21 @@ class CameraStream:
         self._frame_counter = 0
         self._fps_time = time.time()
         # GPU (NVDEC) dekod — sozlamadan; ishlamasa avtomatik dasturiyga o'tadi
-        self._use_gpu = get_active().use_gpu
+        self._use_gpu = _s.use_gpu
         self._gpu_empty = 0           # GPU bilan ketma-ket kadrsiz urinishlar
 
     def _wait_port(self, timeout=20):
+        """O'Z proxy'miz portni ochguncha kutadi.
+
+        Faqat "portga ulanib bo'ladimi" deyish yetmaydi: portni boshqa jarayon
+        (ikkinchi ilova nusxasi, yetim proxy) band qilgan bo'lsa, bizning proxy
+        bog'lana olmay yiqiladi, ffmpeg esa BEGONA proxy'ga ulanib, boshqa
+        kameraning tasvirini shu kamera nomi bilan ko'rsatardi."""
         start = time.time()
         while time.time() - start < timeout and self.running:
+            proc = self.proxy_proc
+            if proc is not None and proc.poll() is not None:
+                return False             # proxy yiqildi (port band?) — ulanmaymiz
             try:
                 with socket.create_connection(("127.0.0.1", self.port), timeout=1):
                     return True
@@ -166,7 +196,11 @@ class CameraStream:
             except OSError:
                 pass
         python = self._python_exe()
-        s = get_active()
+        s = self.settings
+        # Port allaqachon band (boshqa nusxa / yetim proxy) — bo'sh portga
+        # o'tamiz, aks holda ffmpeg begona oqimni o'qirdi ([[_wait_port]]).
+        if _port_busy(self.port):
+            self.port = _free_port()
         # Subprocess sozlamani muhit o'zgaruvchilari orqali oladi (config.py
         # ga bog'liq emas — kutubxona rejimida ham ishlaydi). TO'LIQ sozlama
         # uzatiladi ([[Settings.to_env]]): ilgari faqat `token_file` ketardi
@@ -445,9 +479,14 @@ class StreamManager:
         self.streams = {}
         self.client = client  # token refresh uchun
         if settings is not None:
+            # Orqaga moslik: settings'siz yaratilgan quyi qismlar (viewer,
+            # kesh yo'llari) hali faol sozlamani o'qiydi.
             from cloudcam.settings import set_active
             set_active(settings)
-        self._next_port = get_active().proxy_start_port
+        # Shu menejerning O'Z sozlamasi — oqimlarga va token yangilashga shu
+        # beriladi, keyin boshqa `set_active()` chaqirilsa ham o'zgarmaydi.
+        self.settings = settings or get_active()
+        self._next_port = self.settings.proxy_start_port
         self._token_thread = None
         self._running = False
 
@@ -459,7 +498,7 @@ class StreamManager:
         if skey in self.streams:
             return self.streams[skey]
         stream = CameraStream(serial, channel, self._next_port, decrypt,
-                              width, height, key, url)
+                              width, height, key, url, settings=self.settings)
         self._next_port += 1
         self.streams[skey] = stream
         stream.start()
@@ -504,7 +543,7 @@ class StreamManager:
                 try:
                     if not self.client.is_refresh_needed(max_age):
                         continue
-                    self._refresh_and_save(get_active().token_file)
+                    self._refresh_and_save(self.settings.token_file)
                     print(f"[{time.strftime('%H:%M:%S')}] 🔄 "
                           + t("Token refreshed", "Token yangilandi"))
                 except Exception as e:

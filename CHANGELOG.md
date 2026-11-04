@@ -64,6 +64,21 @@ minor versions; such changes are always listed here.
   comparison with alternatives. The deep-dive moved to `docs/internals.md`.
 
 ### Fixed
+- A `cam_keys.json` that could not be parsed (e.g. one trailing comma after a hand
+  edit) was read as empty, and the next `cloudcam keys`, `keys.set_code()` or
+  `scripts/set_code.py` rewrote it with only the new code, so every other code was
+  lost. Writers now refuse with `KeysFileError` and leave the file untouched; readers
+  still treat it as empty so streams keep opening.
+- Two `CloudCam` / `StreamManager` objects in one process: each one set the global
+  active settings, and a reconnecting camera of the first account started its proxy
+  with the second account's token file and platform. Settings are now bound to the
+  manager and its streams when they are created; the cache warmer uses its own account.
+- A proxy port already held by another process (a second app instance, an orphaned
+  proxy) was treated as ready, and ffmpeg read that foreign proxy, showing another
+  camera's picture under this camera's name. A busy port is replaced by a free one,
+  and the port wait stops as soon as our own proxy has exited.
+- `IsupBridge.want()` stored an invalid device id before validating it, after which
+  every later `want()` / `unwant()` failed, even for valid ids.
 - The `cloudcam` command ignored `config.py`: a console script has no working
   directory on `sys.path`, so it reported "Account required" with a valid config next
   to it. `config.py` is now also loaded from the working directory.
@@ -97,6 +112,12 @@ minor versions; such changes are always listed here.
 - The release workflow never found the CHANGELOG section (gawk regex escaping).
 
 ### Security
+- The local decrypting proxy only answers requests whose `Host` is its own
+  `127.0.0.1` / `localhost` address (DNS-rebinding from a browser page).
+- Wrong-code / offline flag files moved from the shared temp directory to a per-user
+  `0700` directory on POSIX; serial and channel are sanitised in their names.
+  Another local user could previously plant flags or symlinks there.
+- `IsupBridge.stream_url()` validates the device id before putting it in the RTSP path.
 - The password and ISUP token no longer appear in `repr(Settings)` and are no longer
   inherited by the per-camera child processes from `CLOUDCAM_PASSWORD` /
   `CLOUDCAM_ISUP_TOKEN`.

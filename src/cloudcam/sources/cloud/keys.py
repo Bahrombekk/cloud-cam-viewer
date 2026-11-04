@@ -26,8 +26,17 @@ def _path(path: str | None = None) -> str:
     return path or get_active().camkey_file or "cam_keys.json"
 
 
-def load(path: str | None = None) -> dict[str, str]:
-    """Saqlangan kodlar: {serial: KOD}."""
+class KeysFileError(ValueError):
+    """`cam_keys.json` bor, lekin o'qib bo'lmaydi — ustidan YOZILMAYDI."""
+
+
+def load(path: str | None = None, *, strict: bool = False) -> dict[str, str]:
+    """Saqlangan kodlar: {serial: KOD}.
+
+    `strict=False` (o'qish uchun) — buzuq fayl `{}` beradi, oqim baribir ochiladi.
+    `strict=True` — faylni QAYTA YOZISHDAN oldin: fayl bor-u o'qilmasa
+    [[KeysFileError]]. Aks holda qo'lda tahrirlangan fayldagi bitta ortiqcha
+    vergul `{}` ga aylanib, keyingi `save()` HAMMA kodni o'chirib yuborardi."""
     p = _path(path)
     if not os.path.exists(p):
         return {}
@@ -35,9 +44,16 @@ def load(path: str | None = None) -> dict[str, str]:
     try:
         with open(p, encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError) as err:
+        if strict:
+            raise KeysFileError(f"{p} is unreadable ({err}) - fix or remove it; "
+                                f"not overwriting") from err
         return {}
-    return {k: str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        if strict:
+            raise KeysFileError(f"{p} is not a JSON object - not overwriting")
+        return {}
+    return {k: str(v) for k, v in data.items()}
 
 
 def save(keys: dict[str, str], path: str | None = None) -> None:
@@ -47,7 +63,7 @@ def save(keys: dict[str, str], path: str | None = None) -> None:
 
 def set_code(serial: str, code: str, path: str | None = None) -> dict[str, str]:
     """Bitta kodni qo'shib, faylni saqlaydi."""
-    keys = load(path)
+    keys = load(path, strict=True)
     keys[serial] = code.strip().upper()
     save(keys, path)
     return keys
@@ -80,7 +96,7 @@ def fetch(client, serials, *, mfa_code: str | None = None,
     qolganlari kodsiz o'tadi.
     """
     result = FetchResult()
-    keys = load(path)
+    keys = load(path, strict=True)      # bulutga borishdan OLDIN — yozib bo'lmasa so'ramaymiz
     pending = [s for s in dict.fromkeys(serials)
                if overwrite or not keys.get(s) or keys.get(s) == "AUTO"]
     result.skipped = [s for s in dict.fromkeys(serials) if s not in pending]

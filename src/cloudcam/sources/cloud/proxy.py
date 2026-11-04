@@ -50,6 +50,17 @@ _CACHE_KEY = vtm_cache.account_key()
 STREAM_PROBE_TIMEOUT = 6.0     # "auto" rejimda substream shuncha kutiladi
 
 
+def host_allowed(host: str | None, port: int) -> bool:
+    """`Host` sarlavhasi faqat shu lokal proxy manzili bo'lsin.
+
+    Proxy deshifrlangan videoni autentifikatsiyasiz beradi. DNS rebinding'da
+    brauzerdagi begona sahifa `evil.example` ni 127.0.0.1 ga yo'naltirib, shu
+    portdan "o'z domenidek" o'qiy olardi — bunda `Host: evil.example:<port>`
+    keladi. ffmpeg va VLC `127.0.0.1:<port>` yuboradi."""
+    h = (host or "").strip().lower()
+    return h in {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+
+
 def serve(serial: str, port: int, key: str, channel: int = 1,
           substream: bool = False, stream_mode: str | None = None):
     """Bitta kamera uchun lokal dekodlovchi HTTP proxy.
@@ -90,6 +101,9 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
             pass
 
         def do_GET(self):
+            if not host_allowed(self.headers.get("Host"), port):
+                self.send_error(403, "forbidden host")
+                return
             # Xom oqimni dekodlab to'g'ridan-to'g'ri uzatamiz (ichki ffmpeg yo'q):
             #   RTP/PS -> Annex-B (H.264/HEVC), MPEG-TS -> o'zicha.
             # Tashqi ffmpeg (stream_manager) codec'ni auto-detect qilib, bardoshli dekodlaydi.

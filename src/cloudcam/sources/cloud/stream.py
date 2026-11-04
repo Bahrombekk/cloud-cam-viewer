@@ -46,19 +46,22 @@ def open_cloud_stream(client, serial: str, *, channel: int = 1,
         channel=channel, client_type=9, stream_type=stream_type, timeout=timeout)
 
 
-def _make_client():
+def _make_client(settings=None):
     """Token faylidan sessiya (login QILINMAYDI).
 
     [[CloudClient.load_token]] domen va terminal kodini tekshiradi: token fayli
     begona hostga ishora qilsa yoki boshqa kompyuterdan ko'chirilgan bo'lsa
-    sessiya `sessionId` bilan hech qayerga yuborilmaydi."""
-    s = get_active()
+    sessiya `sessionId` bilan hech qayerga yuborilmaydi.
+
+    `settings` — qaysi hisob (standart: faol sozlama). Bir jarayonda bir nechta
+    `CloudCam` bo'lsa har biri o'zinikini beradi."""
+    s = settings or get_active()
     client = CloudClient(None, None, platform=s.platform)
     if not client.load_token(s.token_file):
         raise RuntimeError(t(f"No usable session in {s.token_file} — log in first",
                              f"{s.token_file} da yaroqli sessiya yo'q — avval login qiling"))
     # Hisob kaliti MIJOZGA bog'lanadi — kesh shundan o'qiydi ([[vtm_cache.tag]]).
-    vtm_cache.tag(client)
+    vtm_cache.tag(client, s.token_file)
     return client
 
 

@@ -314,3 +314,28 @@ def test_bridge_lines_cannot_be_injected():
     for bad in ("x\ndefault on", "a b", "", "x" * 65):
         with pytest.raises(IsupError):
             _token(bad, "device id")
+
+
+def test_one_bad_id_does_not_poison_later_wants(bridge):
+    """Yaroqsiz ID avval `_wanted` ga tushib qolardi va keyingi HAR `want()`
+    (to'g'ri ID bilan ham) shu ID tufayli yiqilardi."""
+    import pytest
+
+    from cloudcam.sources.isup import IsupError
+    b, h = bridge
+    b.want(("AA1", 1, False))
+    with pytest.raises(IsupError):
+        b.want(("bad id", 1, False), ("AA2", 1, False))
+    assert b.wanted == {("AA1", 1): False}, "yaroqsiz so'rov ro'yxatni o'zgartirdi"
+    b.want(("AA3", 1, False))
+    assert sorted(h.received[-1][2].strip().splitlines()) == ["AA1 1 0", "AA3 1 0"]
+
+
+def test_stream_url_rejects_ids_that_break_the_rtsp_path():
+    import pytest
+
+    from cloudcam.sources.isup import IsupBridge, IsupError
+    b = IsupBridge(rtsp_base="rtsp://127.0.0.1:8554")
+    for bad in ("../other", "AA1?x=1", "a b"):
+        with pytest.raises(IsupError):
+            b.stream_url(bad, 1)
