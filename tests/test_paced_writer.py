@@ -8,7 +8,8 @@ holda buferlab, o'lchangan tezlikda chiqaradi.
 import threading
 import time
 
-from cloudcam.decrypt_proxy import START, PacedWriter
+from cloudcam.codec.nal import START
+from cloudcam.media.paced import PacedWriter
 
 
 class FakeWfile:
@@ -96,3 +97,26 @@ def test_nothing_is_lost():
     time.sleep(0.8)
     pw.close()
     assert bytes(w.data) == b"".join(frames)
+
+
+def test_parameter_sets_travel_with_the_keyframe():
+    """VPS/SPS/PPS oldingi P-kadrga emas, kalit kadrga tegishli — navbat
+    to'lganda kalit kadrdan oldingilar tashlansa ham ular yo'qolmasin."""
+    pw = PacedWriter(FakeWfile(), "hevc")          # thread ishga tushirilmaydi
+    params = b"".join(START + bytes([t << 1, 0x01, 0x55]) for t in (32, 33, 34))
+    pw.feed(_hevc_frame(False, 1) + params + _hevc_frame(True, 2) + _hevc_frame(False, 3))
+    pw._flush_frame()
+    frames = [d for d, _f, _k in pw._q]
+    keys = [k for _d, _f, k in pw._q]
+    assert keys == [False, True, False]
+    assert frames[1].startswith(params), "param-setlar kalit kadr bilan birga emas"
+    assert params not in frames[0]
+
+
+def test_passthrough_mode_does_not_grow_without_bound():
+    """MPEG-TS (pacing yo'q) rejimida har bo'lak uchun vaqt yozilib, hech
+    qachon tozalanmasdi — 24/7 da yuzlab MB."""
+    pw = PacedWriter(FakeWfile(), None, paced=False)
+    for _ in range(5000):
+        pw.feed(b"\x47" + bytes(187))
+    assert len(pw._rx) == 0

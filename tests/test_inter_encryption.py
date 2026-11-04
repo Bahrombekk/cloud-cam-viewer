@@ -11,7 +11,8 @@ qaror qabul qilishi tekshiriladi.
 """
 from Crypto.Cipher import AES
 
-from cloudcam.decrypt_proxy import START, HevcRtpDecryptor
+from cloudcam.codec.nal import START
+from cloudcam.codec.rtp import HevcRtpDecryptor
 
 KEY = "VERIFYCODE1"
 _AES_KEY = KEY.encode().ljust(16, b"\0")[:16]

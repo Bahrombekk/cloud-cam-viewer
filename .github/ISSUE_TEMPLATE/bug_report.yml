@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ **Do not paste real verification codes, tokens, passwords or full serials.**
+        Use placeholders like `ABCDEF` / `BD1234567`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps / command to reproduce
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      render: text
+  - type: dropdown
+    id: source
+    attributes:
+      label: Camera source
+      options: [Hik-Connect cloud, EZVIZ cloud, ISUP 5.0, Not camera-related]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`python -c \"import cloudcam;print(cloudcam.__version__)\"`, Python, OS, ffmpeg"
+      placeholder: cloudcam 0.3.0, Python 3.12, Windows 11, ffmpeg 7.1
+    validations:
+      required: true

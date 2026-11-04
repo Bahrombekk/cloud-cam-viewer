@@ -3,16 +3,15 @@
 `check_code.py` RTP uchun DOIM `HevcRtpDecryptor` yaratardi. H.264 da SPS
 bayti 0x67 bo'lib, HEVC qoidasida bu tur 51 (VPS=32 emas) — ya'ni param-set
 hech qachon topilmasdi, `key_error` ham qo'yilmasdi. Natija: H.264 kamerada
-KOD TO'G'RI bo'lsa ham doim "keyframe kelmadi" chiqardi. `decrypt_proxy.serve`
+KOD TO'G'RI bo'lsa ham doim "keyframe kelmadi" chiqardi. `proxy.serve`
 esa codec'ni to'g'ri aniqlardi — ya'ni ikki yo'l bir-biriga zid edi.
 """
 from pathlib import Path
 
 from Crypto.Cipher import AES
 
-from cloudcam.decrypt_proxy import (
-    START, H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec,
-)
+from cloudcam.codec.nal import START
+from cloudcam.codec.rtp import H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "VERIFYCODE1"
@@ -80,10 +79,10 @@ def test_encrypted_property_is_public():
     assert dec.encrypted is False
 
 
-def test_check_code_script_picks_the_codec():
-    """`check_code.py` ni import qilib bo'lmaydi (u `config` ni talab qiladi),
-    shuning uchun manba matni qo'riqlanadi."""
-    text = (ROOT / "check_code.py").read_text(encoding="utf-8")
+def test_code_check_picks_the_codec():
+    """Kod tekshiruvi ([[codecheck]]) RTP codec'ini aniqlashi kerak."""
+    text = (ROOT / "src" / "cloudcam" / "sources" / "cloud" / "codecheck.py").read_text(
+        encoding="utf-8")
     assert "detect_rtp_codec" in text, "codec aniqlanmayapti"
     assert "H264RtpDecryptor" in text, "H.264 dekodlovchi ishlatilmayapti"
     assert "._decrypt" not in text, "ichki atribut o'qilmoqda — `encrypted` ishlating"

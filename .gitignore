@@ -28,5 +28,17 @@ Thumbs.db
 # Terminal kodi (avtomatik hisoblanadi)
 feature_code.txt
 
-# Inter-shifr qarorining keshi (avtomatik)
+# Inter-shifr qarorining keshi va bulut metama'lumot keshi (avtomatik)
 enc-*.json
+vtm-*.json
+*.tmp
+
+# Asboblar keshi
+.pytest_cache/
+.ruff_cache/
+.claude/
+
+# Build output
+*.egg-info/
+build/
+dist/

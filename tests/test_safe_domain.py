@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cloudcam.client import CloudClient, UnsafeDomain, safe_domain
+from cloudcam.sources.cloud.client import CloudClient, UnsafeDomain, safe_domain
 
 
 @pytest.mark.parametrize("d", ["api.hik-connect.com", "apiisgp.ezvizlife.com",

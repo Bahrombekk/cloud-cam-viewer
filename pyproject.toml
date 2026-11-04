@@ -1,24 +1,31 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloudcam"
-version = "0.2.0"
-description = "EZVIZ / Hik-Connect bulut kameralariga kirish va shifrlangan oqimlarni deshifrlash (H.264/H.265, RTP + MPEG-PS)"
+dynamic = ["version"]
+description = "Watch and decrypt EZVIZ / Hik-Connect cloud cameras and Hikvision ISUP 5.0 devices from Python (H.264/H.265, encrypted streams)"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT AND Apache-2.0"   # Apache-2.0: pyezvizapi'dan moslashtirilgan kod
+license-files = ["LICENSE", "NOTICE", "src/cloudcam/sources/cloud/vtm/LICENSE-pyezvizapi"]
 requires-python = ">=3.10"
-keywords = ["ezviz", "hik-connect", "hikvision", "cctv", "rtsp", "camera", "hevc", "decrypt"]
+keywords = ["ezviz", "hik-connect", "hikvision", "isup", "cctv", "rtsp", "camera", "hevc", "decrypt", "home-assistant", "frigate"]
 authors = [{ name = "Bahrombek" }]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Video",
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pyezvizapi",
+    # Bulut transporti (VTM/VTDU) pyezvizapi 1.0.5.0 dan cloudcam/vtm/ ga ko'chirilgan
+    # (Apache-2.0, cloudcam/vtm/LICENSE-pyezvizapi) — tashqi bog'liqlik emas.
     "numpy",
     "requests",
     "pycryptodome",
@@ -27,21 +34,43 @@ dependencies = [
 [project.optional-dependencies]
 # Ko'rish (OpenCV) ixtiyoriy — yadro headless ishlaydi.
 viewer = ["opencv-python"]
+# Jonli push hodisalari (`cloudcam events --watch`, `CloudCam.push`).
+events = ["paho-mqtt>=1.6"]
 dev = ["pytest", "ruff"]
 
 [project.urls]
 Homepage = "https://github.com/Bahrombekk/cloud-cam-viewer"
 Source = "https://github.com/Bahrombekk/cloud-cam-viewer"
+Issues = "https://github.com/Bahrombekk/cloud-cam-viewer/issues"
+Changelog = "https://github.com/Bahrombekk/cloud-cam-viewer/blob/main/CHANGELOG.md"
 
 [project.scripts]
 # `pip install` dan keyin buyruq sifatida ishlatiladi.
 cloudcam = "cloudcam.cli:main"
 
-[tool.setuptools]
-packages = ["cloudcam"]
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Ko'chirilgan kodning litsenziyasi paket bilan birga tarqatilishi shart (Apache-2.0 §4).
+"cloudcam.sources.cloud.vtm" = ["LICENSE-pyezvizapi"]
+
+[tool.setuptools.dynamic]
+# Versiyaning yagona manbasi — src/cloudcam/__init__.py
+version = { attr = "cloudcam.__version__" }
 
 [tool.ruff]
 line-length = 100
+target-version = "py310"
+extend-exclude = ["venv", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E731"]   # lambda'ni o'zgaruvchiga berish — qisqa callback'lar uchun ataylab
+
+[tool.ruff.lint.per-file-ignores]
+# Skriptlar import'dan oldin stdout/logging ni sozlaydi.
+"scripts/*.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

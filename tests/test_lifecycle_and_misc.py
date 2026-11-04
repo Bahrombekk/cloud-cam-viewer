@@ -2,15 +2,21 @@
 kod registri va inter-namuna filtri."""
 import io
 import itertools
+import os
 import subprocess
 import sys
 import types
+from pathlib import Path
+
+import pytest
 
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy, stream_manager
-from cloudcam.client import CloudClient
-from cloudcam.decrypt_proxy import HevcRtpDecryptor
+from cloudcam.core import ipc
+
+from cloudcam import stream_manager
+from cloudcam.sources.cloud.client import CloudClient
+from cloudcam.codec.rtp import HevcRtpDecryptor
 from cloudcam.settings import Settings
 
 # ---- 1. jarayon hayoti ------------------------------------------------------
@@ -37,7 +43,7 @@ def test_stop_proc_tolerates_none_and_finished():
 def test_proxy_exits_when_parent_pipe_closes():
     """Ota jarayon o'lsa OS stdin quvurini yopadi -> proxy o'zi chiqadi."""
     code = ("import time, os; os.environ['CLOUDCAM_PARENT_WATCH']='1';"
-            "from cloudcam.decrypt_proxy import watch_parent; watch_parent();"
+            "from cloudcam.core.ipc import watch_parent; watch_parent();"
             "time.sleep(60)")
     p = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
                          cwd=str(stream_manager.os.path.dirname(
@@ -48,7 +54,7 @@ def test_proxy_exits_when_parent_pipe_closes():
 
 def test_watch_parent_calls_exit_on_eof():
     called = []
-    th = decrypt_proxy.watch_parent(io.BytesIO(b"x" * 10), on_exit=lambda: called.append(1))
+    th = ipc.watch_parent(io.BytesIO(b"x" * 10), on_exit=lambda: called.append(1))
     th.join(timeout=5)
     assert called == [1]
 
@@ -61,7 +67,7 @@ def test_proxy_is_started_with_parent_watch(monkeypatch):
     cs._start_proxy()
     assert seen["stdin"] is subprocess.PIPE
     assert seen["env"][stream_manager.PARENT_WATCH_ENV] == "1"
-    assert decrypt_proxy.PARENT_WATCH_ENV == stream_manager.PARENT_WATCH_ENV
+    assert ipc.PARENT_WATCH_ENV == stream_manager.PARENT_WATCH_ENV
 
 
 def test_proxy_started_after_stop_is_killed(monkeypatch):
@@ -117,8 +123,7 @@ def test_get_devices_follows_pages():
 # ---- 6. kod registri ---------------------------------------------------------
 
 def _check_code(monkeypatch, correct):
-    sys.modules.setdefault("config", types.ModuleType("config"))
-    import check_code
+    from cloudcam.sources.cloud import codecheck as check_code
     tried = []
 
     def fake_check(client, serial, code, channel=1):
@@ -172,3 +177,129 @@ def test_clear_sei_does_not_outvote_encrypted_slices():
     for i in range(4, 8):
         dec.feed(_rtp(b"\x02\x01" + _enc(_body(0xAF, i))))
     assert dec._inter_enc is True, dec.inter_note
+
+
+def test_ffmpeg_does_not_read_the_console():
+    """N ta ffmpeg konsol tugmalarini o'qimasin ('q' ffmpeg'ni to'xtatadi)."""
+    from cloudcam import stream_manager as sm
+    text = Path(sm.__file__).read_text(encoding="utf-8")
+    assert '"-nostdin"' in text and "stdin=subprocess.DEVNULL" in text
+
+
+def test_missing_ffmpeg_is_reported_not_swallowed():
+    from cloudcam import stream_manager as sm
+    text = Path(sm.__file__).read_text(encoding="utf-8")
+    assert "except FileNotFoundError" in text
+
+
+def test_proxy_port_is_not_shared_on_windows():
+    """Windows'da SO_REUSEADDR band portga ikkinchi bog'lanishga ruxsat beradi."""
+    import os
+
+    import pytest
+
+    from cloudcam.sources.cloud.proxy import _Server
+    assert _Server.allow_reuse_address == (os.name != "nt")
+    if os.name != "nt":
+        return
+    from http.server import BaseHTTPRequestHandler
+    a = _Server(("127.0.0.1", 0), BaseHTTPRequestHandler)
+    try:
+        port = a.server_address[1]
+        with pytest.raises(OSError):
+            _Server(("127.0.0.1", port), BaseHTTPRequestHandler).server_close()
+    finally:
+        a.server_close()
+
+
+def test_two_accounts_in_one_process_keep_their_own_settings(monkeypatch):
+    """Ikkinchi `CloudCam`/`StreamManager` global faol sozlamani almashtiradi.
+    Birinchi hisob kamerasi qayta ulanganda proxy IKKINCHI hisobning token
+    fayli bilan ishga tushardi."""
+    from cloudcam.settings import Settings, get_active, set_active
+
+    seen = []
+    monkeypatch.setattr(stream_manager.subprocess, "Popen",
+                        lambda cmd, **kw: seen.append(kw["env"]) or None)
+    prev = get_active()
+    try:
+        a = stream_manager.StreamManager(settings=Settings(token_file="a.json",
+                                                           platform="ezviz"))
+        cs = stream_manager.CameraStream("SER1", 1, 8799, settings=a.settings)
+        stream_manager.StreamManager(settings=Settings(token_file="b.json"))
+        assert get_active().token_file == "b.json"
+        cs.running = True
+        cs._start_proxy()                     # = qayta ulanish
+        env = seen[-1]
+        assert env["CLOUDCAM_TOKEN_FILE"].endswith("a.json")
+        assert env["CLOUDCAM_PLATFORM"] == "ezviz"
+    finally:
+        set_active(prev)
+
+
+def _listener():
+    """Portni band qilib turgan "begona" tinglovchi."""
+    import socket as _s
+    srv = _s.socket(_s.AF_INET, _s.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    return srv, srv.getsockname()[1]
+
+
+def test_busy_port_is_not_shared_with_a_foreign_proxy(monkeypatch):
+    """Port boshqa jarayonda band bo'lsa, proxy BOSHQA portda ochiladi —
+    ffmpeg begona kameraning oqimini o'qimaydi."""
+    srv, busy = _listener()
+    try:
+        seen = []
+        monkeypatch.setattr(stream_manager.subprocess, "Popen",
+                            lambda cmd, **kw: seen.append(cmd) or None)
+        cs = stream_manager.CameraStream("SER1", 1, busy)
+        cs.running = True
+        cs._start_proxy()
+        assert cs.port != busy
+        assert str(cs.port) in seen[-1] and str(busy) not in seen[-1]
+        assert str(cs.port) in cs._ffmpeg_cmd()[cs._ffmpeg_cmd().index("-i") + 1]
+    finally:
+        srv.close()
+
+
+def test_wait_port_ignores_a_listener_when_our_proxy_died():
+    """O'z proxy'miz yiqilgan (port band edi) — portda kimdir tinglasa ham
+    "tayyor" demaymiz."""
+    srv, busy = _listener()
+    try:
+        cs = stream_manager.CameraStream("SER1", 1, busy)
+        cs.running = True
+        cs.proxy_proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        cs.proxy_proc.wait()
+        assert cs._wait_port(timeout=2) is False
+    finally:
+        srv.close()
+
+
+def test_proxy_only_answers_its_own_local_host_header():
+    """DNS rebinding: begona sahifa `Host: evil.example:<port>` bilan keladi."""
+    from cloudcam.sources.cloud.proxy import host_allowed
+    assert host_allowed("127.0.0.1:8700", 8700)
+    assert host_allowed("localhost:8700", 8700)
+    for bad in ("evil.example:8700", "127.0.0.1:8701", "127.0.0.1", "", None):
+        assert not host_allowed(bad, 8700), bad
+
+
+def test_flag_files_stay_inside_the_private_flag_dir():
+    from cloudcam.core import ipc
+    d = os.path.realpath(ipc.flag_dir())
+    for p in (ipc.keyerror_flag_path("../../etc/x", 1),
+              ipc.offline_flag_path("SER1/..", "1/../2")):
+        assert os.path.dirname(os.path.realpath(p)) == d, p
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX ruxsatlari")
+def test_flag_dir_is_private_on_posix():
+    import stat as _stat
+
+    from cloudcam.core import ipc
+    st = os.stat(ipc.flag_dir())
+    assert st.st_uid == os.getuid()
+    assert _stat.S_IMODE(st.st_mode) & 0o077 == 0

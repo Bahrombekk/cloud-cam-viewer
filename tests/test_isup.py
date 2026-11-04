@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from cloudcam.isup import IsupBridge, IsupError, IsupUnavailable
+from cloudcam.sources.isup import IsupBridge, IsupError, IsupUnavailable
 from cloudcam.settings import Settings
 
 DEVICES = {
@@ -207,7 +207,7 @@ def test_bridge_reports_unparsed_key_lines(bridge, monkeypatch):
         return {"ok": True, "bad": 2}
 
     monkeypatch.setattr(b, "_call", _bad)
-    with pytest.raises(IsupError, match="2 ta kalit"):
+    with pytest.raises(IsupError, match="could not parse 2 key"):
         b.set_keys({"AA1": "K"})
 
 
@@ -234,13 +234,13 @@ def test_token_is_sent_and_enforced():
 def test_a_missing_bridge_says_so_clearly():
     """Ko'prik ixtiyoriy tashqi bog'liqlik — yo'qligi tushunarli bo'lsin."""
     b = IsupBridge("http://127.0.0.1:1", timeout=0.3)
-    with pytest.raises(IsupUnavailable, match="javob bermadi"):
+    with pytest.raises(IsupUnavailable, match="did not respond"):
         b.devices()
     assert b.health() is False, "health() xato ko'tarmasligi kerak"
 
 
 def test_settings_carry_the_bridge_address():
-    from cloudcam import isup as _isup
+    from cloudcam.sources import isup as _isup
     s = Settings(isup_url="http://h:9/", isup_token="t",
                  isup_rtsp_base="rtsp://h:8554")
     b = _isup.from_settings(s)
@@ -301,3 +301,41 @@ def test_an_isup_stream_never_starts_the_decrypt_proxy(monkeypatch):
     cs.running = True
     cs._reader_loop()
     assert started == [], "ISUP oqimi uchun proxy ishga tushdi"
+
+
+def test_bridge_lines_cannot_be_injected():
+    """Qurilma o'zi yuboradigan ID ham ishonchsiz: bo'sh joy yoki yangi qator
+    `default on` kabi qo'shimcha buyruq qatori qo'shardi."""
+    import pytest
+
+    from cloudcam.sources.isup import IsupError, _token
+    assert _token("AA1234567", "device id") == "AA1234567"
+    assert _token("k3y@#!", "key") == "k3y@#!"
+    for bad in ("x\ndefault on", "a b", "", "x" * 65):
+        with pytest.raises(IsupError):
+            _token(bad, "device id")
+
+
+def test_one_bad_id_does_not_poison_later_wants(bridge):
+    """Yaroqsiz ID avval `_wanted` ga tushib qolardi va keyingi HAR `want()`
+    (to'g'ri ID bilan ham) shu ID tufayli yiqilardi."""
+    import pytest
+
+    from cloudcam.sources.isup import IsupError
+    b, h = bridge
+    b.want(("AA1", 1, False))
+    with pytest.raises(IsupError):
+        b.want(("bad id", 1, False), ("AA2", 1, False))
+    assert b.wanted == {("AA1", 1): False}, "yaroqsiz so'rov ro'yxatni o'zgartirdi"
+    b.want(("AA3", 1, False))
+    assert sorted(h.received[-1][2].strip().splitlines()) == ["AA1 1 0", "AA3 1 0"]
+
+
+def test_stream_url_rejects_ids_that_break_the_rtsp_path():
+    import pytest
+
+    from cloudcam.sources.isup import IsupBridge, IsupError
+    b = IsupBridge(rtsp_base="rtsp://127.0.0.1:8554")
+    for bad in ("../other", "AA1?x=1", "a b"):
+        with pytest.raises(IsupError):
+            b.stream_url(bad, 1)

@@ -7,7 +7,10 @@ shuning uchun manba matni test bilan qo'riqlanadi.
 import re
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "cloudcam" / "stream_manager.py"
+import cloudcam
+
+PKG = Path(cloudcam.__file__).resolve().parent
+SRC = PKG / "stream_manager.py"
 TEXT = SRC.read_text(encoding="utf-8")
 
 

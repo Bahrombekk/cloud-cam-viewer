@@ -3,52 +3,70 @@
 O'lchov (bir xil devor, 23 plitka): asosiy oqimda tasvir to'kilib qotgan;
 substream bilan plitka 640x360 / ~0.11 Mbit/s (asosiysi ~4 Mbit/s) va hammasi
 toza dekodlangan.
+
+Ilgari bu kutubxona URL quruvchisining global almashtirilishi (monkeypatch +
+regex) edi — upstream URL formati o'zgarsa substream JIMGINA asosiy oqimga
+aylanardi. Endi `stream_type` — URL quruvchining o'z parametri.
 """
 import re
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
-import pyezvizapi.cloud_stream as _cs
 import pytest
 
-from cloudcam import decrypt_proxy
+import cloudcam
+from cloudcam.sources.cloud import proxy as decrypt_proxy
+from cloudcam.sources.cloud import stream as cloud_stream
+from cloudcam.sources.cloud.vtm import STREAM_MAIN, STREAM_SUB, VtmError, build_vtm_url
 
-MGR = Path(__file__).resolve().parents[1] / "cloudcam" / "stream_manager.py"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_patch():
-    """ASL `build_vtm_url` BIR MARTA saqlanadi (qayta-patch qilmaslik uchun) —
-    testlar orasida shu xotirani tozalaymiz."""
-    decrypt_proxy._orig_build_vtm_url = None
-    yield
-    decrypt_proxy._orig_build_vtm_url = None
+PKG = Path(cloudcam.__file__).resolve().parent
+MGR = PKG / "stream_manager.py"
 
 
-def test_substream_rewrites_only_the_stream_parameter():
-    _cs.build_vtm_url = lambda *a, **k: "rtsp://vtm/x?dev=A1&stream=1&ch=2"
-    try:
-        decrypt_proxy.set_substream(True)
-        assert _cs.build_vtm_url() == "rtsp://vtm/x?dev=A1&stream=2&ch=2"
-    finally:
-        decrypt_proxy.set_substream(False)
+def _q(url):
+    return {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
 
 
-def test_substream_can_be_switched_back():
-    orig = "rtsp://vtm/x?stream=1"
-    _cs.build_vtm_url = lambda *a, **k: orig
-    decrypt_proxy.set_substream(True)
-    decrypt_proxy.set_substream(False)
-    assert _cs.build_vtm_url() == orig
+def _url(**kw):
+    return build_vtm_url("1.2.3.4", 8554, "A1", "?biz=7&stream=9", "TOK",
+                         channel=2, timestamp_ms=1, **kw)
 
 
-def test_substream_does_not_touch_similar_looking_values():
-    _cs.build_vtm_url = lambda *a, **k: "rtsp://vtm/x?substream=1&stream=1&downstream=1"
-    try:
-        decrypt_proxy.set_substream(True)
-        out = _cs.build_vtm_url()
-        assert "substream=1" in out and "downstream=1" in out and "&stream=2" in out
-    finally:
-        decrypt_proxy.set_substream(False)
+def test_main_stream_is_the_default():
+    assert _q(_url())["stream"] == "1"
+
+
+def test_substream_sets_only_the_stream_parameter():
+    main, sub = _q(_url(stream_type=STREAM_MAIN)), _q(_url(stream_type=STREAM_SUB))
+    assert sub["stream"] == "2"
+    assert {k: v for k, v in sub.items() if k != "stream"} == \
+        {k: v for k, v in main.items() if k != "stream"}
+
+
+def test_our_stream_type_wins_over_stream_biz_params():
+    """`streamBizUrl` dagi `stream` bizniki ustidan yozib ketmasligi kerak."""
+    q = _q(_url(stream_type=STREAM_SUB))
+    assert q["stream"] == "2" and q["biz"] == "7"
+
+
+def test_unknown_stream_type_is_rejected():
+    with pytest.raises(VtmError):
+        _url(stream_type=3)
+
+
+def test_proxy_passes_stream_type_to_the_url_builder(monkeypatch):
+    seen = {}
+
+    def _open(pagelist, vtdu, serial, **kw):
+        seen.update(kw)
+        return "cm"
+
+    monkeypatch.setattr(cloud_stream.vtm_cache, "pagelist", lambda c: {})
+    monkeypatch.setattr(cloud_stream.vtm_cache, "vtdu", lambda c: {})
+    monkeypatch.setattr(cloud_stream._vtm, "open_cloud_stream", _open)
+    assert cloud_stream.open_cloud_stream(object(), "A1", channel=3,
+                                           stream_type=STREAM_SUB) == "cm"
+    assert seen["stream_type"] == STREAM_SUB and seen["channel"] == 3
 
 
 def test_manager_passes_the_flag_when_enabled():
@@ -63,7 +81,7 @@ def test_auto_mode_tries_substream_first_then_main():
     Hamma kamerada substream yo'q (batareyali modellar, ba'zi NVR kanallari):
     qattiq `sub` bunday kamerada qora ekran, qattiq `main` esa grid'da
     bekorga 1440p. Tartib va probe muddati shu yerda qo'riqlanadi."""
-    src = (Path(__file__).resolve().parents[1] / "cloudcam" / "decrypt_proxy.py"
+    src = (PKG / "sources" / "cloud" / "proxy.py"
            ).read_text(encoding="utf-8")
     m = re.search(r'attempts\s*=\s*\[\("sub",\s*STREAM_PROBE_TIMEOUT\),\s*\("main"', src)
     assert m, "auto rejimda substream BIRINCHI sinalishi kerak"

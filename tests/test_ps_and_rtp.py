@@ -3,8 +3,8 @@ import itertools
 
 from Crypto.Cipher import AES
 
-from cloudcam import decrypt_proxy
-from cloudcam.decrypt_proxy import HevcRtpDecryptor, PsStreamDecryptor
+from cloudcam.codec.ps import PsStreamDecryptor
+from cloudcam.codec.rtp import HevcRtpDecryptor
 
 KEY = "ABCDEF"
 _K = KEY.encode().ljust(16, b"\0")
@@ -158,3 +158,84 @@ def test_rtp_seq_wraparound_is_not_a_gap():
     dec.feed(_rtp(VPS + _body(0x0C, 0), seq=0xFFFF))
     dec.feed(_rtp(TRAIL + _body(0xAF, 1), seq=0))
     assert dec.seq_gaps == 0
+
+
+# ---- PS: GOP o'rtasidan boshlanish, cheksiz PES, resync ----
+
+def test_ps_joining_mid_gop_is_not_a_wrong_code():
+    """Bulut oqimni GOP o'rtasidan beradi: VPS'dan oldin 30 ta P-slice keladi.
+    Avval 24 tadan keyin "kod xato" deb kamera butunlay to'xtatilardi."""
+    head, _, tail = _stream(inter_encrypted=False)
+    early = [_nal(TRAIL, _body(0xAF, 40 + i), False) for i in range(30)]
+    dec = PsStreamDecryptor(KEY)
+    out = dec.feed(_ps(early + head + tail))
+    assert dec.key_error is False
+    assert dec.codec == "hevc"
+    assert START + VPS + _body(0x0C, 0) in out
+
+
+def test_ps_wrong_code_is_still_reported():
+    head, inter, tail = _stream(inter_encrypted=True, n_inter=30)
+    dec = PsStreamDecryptor("ZZZZZZ")
+    dec.feed(_ps(head + inter + tail))
+    assert dec.key_error is True
+
+
+def test_ps_unbounded_video_pes_keeps_every_nal():
+    """length=0 PES ichidagi NAL start kodlari PES chegarasi deb olinmasin."""
+    head, inter, tail = _stream(inter_encrypted=False)
+    es = b"".join(START + n for n in head + inter + tail)
+    pack = b"\x00\x00\x01\xba" + b"\x44" + b"\x00" * 8 + b"\xf8"
+    ps = pack + b"\x00\x00\x01\xe0\x00\x00" + b"\x80\x00\x00" + es + pack
+    dec = PsStreamDecryptor(KEY)
+    out = dec.feed(ps)
+    assert dec.codec == "hevc"
+    assert START + VPS + _body(0x0C, 0) in out
+    for n in inter:
+        assert START + n in out
+
+
+def test_ps_stray_nal_start_code_does_not_swallow_following_packets():
+    """Resync'dan keyin PS bo'lmagan `00 00 01 xx` ko'rilsa, keyingi 64 KB
+    gacha "uzunlik" deb o'tkazib yuborilmasin."""
+    head, inter, tail = _stream(inter_encrypted=False)
+    junk = b"\x00\x00\x01\x26\xff\xff" + b"\x11" * 10       # NAL'ga o'xshash qoldiq
+    dec = PsStreamDecryptor(KEY)
+    out = dec.feed(junk + _ps(head + inter + tail))
+    assert dec.codec == "hevc"
+    for n in inter:
+        assert START + n in out
+
+
+# ---- RTP: buzuq va tartibsiz paketlar sessiyani uzmasin ----
+
+def test_rtp_malformed_packets_are_dropped_not_raised():
+    """Avval bitta yaroqsiz paket (bo'sh, 1 bayt, xato padding) istisno otib,
+    butun oqimni uzardi -> proxy + ffmpeg qayta ishga tushardi."""
+    from cloudcam.codec.rtp import H264RtpDecryptor
+    for dec in (_clear_hevc_rtp(), H264RtpDecryptor(KEY)):
+        bad_padding = bytes([0xA0, 96, 0, 1]) + b"\x00" * 8 + b"\x01\x02\x09"
+        for pkt in (b"", b"\x80", bad_padding):
+            assert dec.feed(pkt) == b""
+        assert dec.bad_packets == 3
+
+
+def test_rtp_reordered_packet_is_one_gap_not_three():
+    dec = _clear_hevc_rtp()
+    base = next(_seq)
+    dec.feed(_rtp(TRAIL + _body(0xAF, 1), seq=base))
+    gaps = dec.seq_gaps
+    for s in (base + 2, base + 1, base + 3):
+        dec.feed(_rtp(TRAIL + _body(0xAF, s % 50), seq=s))
+    assert dec.seq_gaps - gaps == 1 and dec.late_packets == 1
+
+
+def test_rtp_sequence_restart_is_accepted_after_a_while():
+    """Oqim seq'ni qayta boshlasa (orqaga sakrasa) abadiy "eski" deb tashlanmasin."""
+    dec = _clear_hevc_rtp()
+    start = next(_seq) + 1000
+    dec.feed(_rtp(TRAIL + _body(0xAF, 1), seq=start))
+    got = b""
+    for i in range(60):
+        got += dec.feed(_rtp(TRAIL + _body(0xAF, i % 50), seq=start - 20000 + i))
+    assert got, "seq qayta boshlangandan keyin video umuman chiqmadi"

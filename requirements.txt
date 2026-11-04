@@ -1,5 +1,2 @@
-pyezvizapi
-opencv-python
-numpy
-requests
-pycryptodome
+# Bitta manba — pyproject.toml. Bu fayl faqat `pip install -r` odatidagilar uchun.
+-e .[viewer]
