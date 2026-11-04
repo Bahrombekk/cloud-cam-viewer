@@ -25,7 +25,7 @@ import subprocess
 import threading
 from urllib.parse import urlsplit, urlunsplit
 
-from cloudcam.stream_manager import CameraStream
+from cloudcam.stream_manager import CameraStream, _free_port
 
 
 def redact_url(url: str) -> str:
@@ -72,8 +72,11 @@ class RtspPublisher(CameraStream):
 
     def __init__(self, serial, channel, port, target, *, decrypt=True, key=None,
                  url=None, settings=None):
-        super().__init__(serial, channel, port, decrypt=decrypt, key=key, url=url,
-                         settings=settings)
+        # port=0 — OS bergan bo'sh port: `cloudcam serve` bir vaqtda o'nlab
+        # `cloudcam stream` jarayonini ochadi, hammasi bitta boshlang'ich portni
+        # (8700) talashib, birinchi urinishda yiqilardi.
+        super().__init__(serial, channel, port or _free_port(), decrypt=decrypt, key=key,
+                         url=url, settings=settings)
         self.target = check_target(target)
         self._use_gpu = False                 # dekod yo'q — NVDEC kerak emas
         self._stderr = collections.deque(maxlen=self.STDERR_LINES)

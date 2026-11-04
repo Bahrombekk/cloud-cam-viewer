@@ -70,6 +70,13 @@ class SessionExpired(RuntimeError):
     to'liq loginga (CAPTCHA 1015 / yangi qurilma 2FA) olib kelardi."""
 
 
+class LoginRequired(RuntimeError):
+    """Saqlangan sessiya yo'q yoki eskirgan, parol esa berilmagan.
+
+    Bo'sh parol bilan login qilinmaydi: bulut uni noto'g'ri parol deb sanaydi
+    va bir necha urinishdan keyin CAPTCHA so'raydi."""
+
+
 class CloudClient:
     """EZVIZ / Hik-Connect bulutiga kirish va qurilmalar ro'yxati."""
 
@@ -288,6 +295,14 @@ class CloudClient:
                 pass                 # bulut rad etdi -> to'liq login
             # Tarmoq xatosi o'zicha ko'tariladi: parol bilan kirish ham
             # baribir o'tmasdi, faqat CAPTCHA xavfi qo'shilardi.
+        if not self.password:
+            # Parolsiz rejim (masalan `cloudcam serve` ishga tushirgan oqimlar):
+            # faqat saqlangan sessiya ishlatiladi.
+            raise LoginRequired(t(
+                f"No usable session in {path} and no password configured; "
+                f"log in once with the email and password",
+                f"{path} da yaroqli sessiya yo'q va parol berilmagan; "
+                f"email va parol bilan bir marta kiring"))
         self.login()
         self.save_token(path)
         return "login"

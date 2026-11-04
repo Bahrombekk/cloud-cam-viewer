@@ -19,7 +19,19 @@ minor versions; such changes are always listed here.
   unreachable server left ffmpeg hanging silently for 30 s and more. ffmpeg errors are
   shown as the stream error.
 
+- **`cloudcam serve`**: every camera as an on-demand RTSP / WebRTC / HLS stream through
+  MediaMTX (1.9+), main and `/sub` path per camera, one cloud stream shared by all viewers
+  and closed 30 s after the last one. Safe defaults: localhost only (UDP too), publishing
+  only from this host, optional read credentials, unknown paths rejected, RTMP/SRT/MoQ
+  off, 25 s start timeout, 30 s read timeout. MediaMTX is found on PATH or in
+  `<data dir>/bin/`; the version is detected so version-specific keys are only written
+  where MediaMTX knows them. Verified end to end with MediaMTX 1.20.0 and a live camera.
+- Account commands work with only a saved session; without a password no login is
+  attempted (`LoginRequired`) instead of sending an empty password.
+
 ### Changed
+- `cloudcam stream` gives its proxy a free port (many run side by side under `serve`) and
+  has `--no-refresh` (the session is refreshed by the parent).
 - `CameraStream` reads ffmpeg output through `_consume()` / `_mark_frames()`, so other
   outputs can reuse the reconnect, flag and watchdog logic.
 

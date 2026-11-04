@@ -27,6 +27,7 @@ the included [`isup-bridge`](isup-bridge/), which needs Hikvision's ISUP SDK (se
 - [Verification codes](#verification-codes)
 - [Command-line reference](#command-line-reference)
 - [Python API](#python-api)
+- [RTSP gateway](#rtsp-gateway)
 - [ISUP 5.0](#isup-50)
 - [Architecture](#architecture)
 - [Compatibility](#compatibility)
@@ -185,9 +186,10 @@ Additional environment variables: `CLOUDCAM_LANG=uz` for Uzbek messages,
 `CLOUDCAM_FEATURE_CODE` to override the per-install terminal id.
 
 The account commands (`cameras`, `keys`, `snapshot`, `view`, `status`, `events`,
-`records`, `ptz`) need the email and password to be configured even when a saved
-session exists: the session is resumed first and the password is used only if a new
-login is required. `cloudcam code check` and `cloudcam isup` do not need them.
+`records`, `ptz`, `stream`, `serve`) resume the saved session. The email and password
+are only needed when there is no usable session yet; without them no login is attempted
+(an empty password would count as a failed login). `cloudcam code check` and
+`cloudcam isup` never need them.
 
 For a source checkout:
 
@@ -280,6 +282,7 @@ Global options, placed before the command: `--email`, `--password`,
 | `cloudcam snapshot SERIAL [--channel N] [--key CODE] [--out FILE] [--quality Q] [--timeout S]` | Save one JPEG frame (default `<SERIAL>_ch<N>.jpg`, quality 85, timeout 15 s) |
 | `cloudcam view` | Grid viewer with every camera on the account |
 | `cloudcam stream SERIAL --rtsp URL [--channel N] [--stream main\|sub\|auto] [--key CODE]` | Publish one camera to an RTSP server (MediaMTX, go2rtc, ...) without transcoding, until Ctrl+C |
+| `cloudcam serve [--listen ADDR] [--read-user U --read-pass P] [--no-substream] [--print-config]` | Every camera as an on-demand RTSP / WebRTC / HLS stream through MediaMTX; see [RTSP gateway](#rtsp-gateway) |
 | `cloudcam status [SERIAL ...]` | Online state, disks, encryption and privacy mode; exits with 1 if a device is offline or a disk is not OK |
 | `cloudcam events [SERIAL ...] [--limit N] [--save-images DIR]` | Recent events (default 20), optionally saving decrypted pictures |
 | `cloudcam events --watch [--save-images DIR]` | Live push events until Ctrl+C (`events` extra) |
@@ -354,6 +357,66 @@ port, readable by ffmpeg) and `close()`.
 
 Streams opened through one `CloudCam` keep its settings, so a second `CloudCam` for
 another account in the same process does not change them.
+
+## RTSP gateway
+
+`cloudcam serve` turns every camera on the account into a local RTSP, WebRTC and HLS
+stream through [MediaMTX](https://github.com/bluenviron/mediamtx) (1.9 or newer), so
+Frigate, Home Assistant, VLC or a browser can read it. Streams are opened on demand:
+the first viewer starts the cloud stream, every further viewer shares it, and it is
+closed 30 s after the last viewer leaves. Video is copied, never re-encoded.
+
+```bash
+cloudcam serve                                   # localhost only
+cloudcam serve --listen 0.0.0.0 --read-user frigate --read-pass 'secret'
+```
+
+```
+rtsp://127.0.0.1:8554/cam/AB1234567_1                Warehouse
+rtsp://127.0.0.1:8554/cam/AB1234567_2                Office - Yard
+(append /sub for the substream; WebRTC player: http://127.0.0.1:8889/<path>)
+```
+
+| Path | Stream |
+|---|---|
+| `cam/<SERIAL>_<CHANNEL>` | Main stream |
+| `cam/<SERIAL>_<CHANNEL>/sub` | Substream, or the main stream on cameras without one |
+
+MediaMTX is looked up on `PATH`, then in `<data dir>/bin/`; `--mediamtx PATH` sets it
+explicitly. Without it, `cloudcam serve` still writes the config
+(`<data dir>/mediamtx.yml`, or `--config PATH`) and tells you how to start it;
+`--print-config` prints it instead.
+
+Defaults that differ from MediaMTX's own, on purpose:
+
+- Listens on `127.0.0.1` only, including the UDP ports (RTP/RTCP, WebRTC ICE);
+  `--listen 0.0.0.0` exposes it.
+- Only this host may **publish**; other hosts may only read, optionally with
+  `--read-user/--read-pass`. MediaMTX's default lets anyone publish to any path, which
+  would let a device on the network replace a camera's picture.
+- Paths that are not cameras on the account are rejected.
+- RTMP, SRT and (on MediaMTX 1.19+) MoQ are switched off.
+- `runOnDemandStartTimeout` is 25 s (the cloud's first frame takes 7-10 s) and
+  `readTimeout` is 30 s (cloud streams pause; see limitations below).
+
+The spawned `cloudcam stream` processes use the saved session; the password is not
+passed to them and the session is refreshed by `cloudcam serve` itself.
+
+Frigate example (`detect` on the substream, `record` on the main stream):
+
+```yaml
+cameras:
+  warehouse:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/cam/AB1234567_1/sub
+          roles: [detect]
+        - path: rtsp://127.0.0.1:8554/cam/AB1234567_1
+          roles: [record]
+```
+
+Single camera without MediaMTX management: `cloudcam stream SERIAL --rtsp URL`
+publishes to an RTSP server you already run.
 
 ## ISUP 5.0
 
@@ -459,6 +522,12 @@ not been exercised on a live account yet.
   concurrent-stream limit. Each camera uses two processes.
 - `cloudcam keys` requires an account that allows 2FA elevation. Shared devices and
   sub-accounts may not return codes; enter those with `cloudcam code`.
+- With `cloudcam serve`, when the main stream and the substream of the same channel are
+  both open and one of them closes, the cloud pauses the other one for about 9 s, and
+  occasionally ends it (it is then reopened). Keep both open (Frigate's detect and record
+  roles do) or use `--no-substream`.
+- If `cloudcam serve` is killed instead of stopped with Ctrl+C, its MediaMTX process keeps
+  running.
 - The CLI messages are in English or Uzbek (`CLOUDCAM_LANG=uz`); many source comments
   are still in Uzbek.
 

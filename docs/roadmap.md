@@ -147,11 +147,17 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
 
 - [x] **0.4, step 1 — `cloudcam stream` / `CloudCam.publish()`**: one camera to an RTSP
   server without transcoding, arrival-time timestamps, connect timeout.
-- [ ] **0.4, step 2 — `cloudcam serve`**: MediaMTX config with an on-demand path per
-  camera (`runOnDemand` -> `cloudcam stream`, start timeout above the 7-10 s cloud
-  first frame), main and `/sub` paths, ISUP paths as RTSP sources.
-- [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), Frigate and Home
-  Assistant examples.
+- [x] **0.4, step 2 — `cloudcam serve`**: MediaMTX config with an on-demand main and
+  `/sub` path per camera; verified with MediaMTX 1.20.0 and a live camera.
+- [ ] **Sibling sessions** (P1): closing one cloud session of a channel pauses the other
+  (~9 s, measured) or ends it. Options: keep a lingering session open longer, close
+  sessions in a way the cloud does not propagate, or reopen the survivor proactively.
+- [ ] **`cloudcam serve` killed hard** (P2): MediaMTX keeps running; use a Windows job
+  object / POSIX process group so the whole tree stops.
+- [ ] ISUP paths in `cloudcam serve` (MediaMTX `source: rtsp://` to the bridge).
+- [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), `cloudcam serve
+  --install-mediamtx` (official release for the platform, checksum verified), Frigate and
+  Home Assistant examples.
 - [ ] **0.4 — `cloudcam serve` (overall).** Every camera as a local RTSP / WebRTC stream through
   MediaMTX or go2rtc, with one upstream cloud session per camera shared by any number
   of viewers (fan-out in the media layer, never one cloud stream per viewer). Usable

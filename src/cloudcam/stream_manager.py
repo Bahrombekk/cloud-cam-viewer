@@ -513,7 +513,7 @@ class StreamManager:
         return stream
 
     def publish(self, serial, channel, target, *, decrypt=True, key=None, url=None,
-                settings=None):
+                settings=None, port=None):
         """Kamerani RTSP serverga transkodsiz publish qiladi ([[RtspPublisher]]).
 
         Bir xil (serial, kanal, manzil) ikkinchi marta so'ralsa mavjudi qaytadi."""
@@ -521,9 +521,11 @@ class StreamManager:
         skey = ("publish", serial, channel, target)
         if skey in self.streams:
             return self.streams[skey]
-        pub = RtspPublisher(serial, channel, self._next_port, target, decrypt=decrypt,
+        if port is None:
+            port = self._next_port
+            self._next_port += 1
+        pub = RtspPublisher(serial, channel, port, target, decrypt=decrypt,
                             key=key, url=url, settings=settings or self.settings)
-        self._next_port += 1
         self.streams[skey] = pub
         pub.start()
         return pub

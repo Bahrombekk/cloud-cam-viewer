@@ -6,6 +6,7 @@
     cloudcam code check <SERIAL> KOD  # kodni jonli oqimda tekshirish (code set — saqlash)
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
     cloudcam stream <SERIAL> --rtsp URL  # kamerani RTSP serverga publish (transkodsiz)
+    cloudcam serve                   # har kamera — lokal RTSP/WebRTC/HLS (MediaMTX)
     cloudcam status                  # qurilmalar: onlayn, disklar, shifrlash
     cloudcam events [--watch]        # hodisalar (--watch: jonli push, cloudcam[events])
     cloudcam records <SERIAL>        # qurilmadagi (SD/NVR) yozuvlar
@@ -35,12 +36,19 @@ def _cam(args) -> CloudCam:
     if args.platform:
         s = s.replace(platform=args.platform)
     if not s.email or not s.password:
-        sys.exit(t("Account required: --email/--password or "
-                   "CLOUDCAM_EMAIL/CLOUDCAM_PASSWORD (or config.py).",
-                   "Hisob kerak: --email/--password yoki CLOUDCAM_EMAIL/PASSWORD "
-                   "(yoki config.py)."))
+        # Saqlangan sessiya bo'lsa parol shart emas — u faqat yangi login uchun kerak.
+        from cloudcam.sources.cloud.client import CloudClient
+        if not CloudClient(None, None, platform=s.platform).load_token(s.token_file):
+            sys.exit(t("Account required: --email/--password or "
+                       "CLOUDCAM_EMAIL/CLOUDCAM_PASSWORD (or config.py).",
+                       "Hisob kerak: --email/--password yoki CLOUDCAM_EMAIL/PASSWORD "
+                       "(yoki config.py)."))
+    from cloudcam.sources.cloud.client import LoginRequired
     cam = CloudCam(settings=s)
-    cam.login()
+    try:
+        cam.login()
+    except LoginRequired as e:
+        sys.exit(str(e))
     if cam.migrated:
         import os
         where = os.path.dirname(s.token_file)
@@ -114,9 +122,14 @@ def cmd_stream(args) -> int:
         sys.exit(str(e))
     cam = _cam(args)
     try:
-        cam.start_token_refresh()             # uzoq ishlaydi — sessiya eskirmasin
+        if not args.no_refresh:
+            # Uzoq ishlaydi — sessiya eskirmasin. `cloudcam serve` ostida sessiyani
+            # ota jarayon yangilaydi: o'nlab oqim bir vaqtda refresh qilsa, aylanuvchi
+            # refresh token bir-birini bekor qilardi.
+            cam.start_token_refresh()
+        # Bitta kamera — proxy uchun OS bergan bo'sh port (serve ostida ko'p jarayon).
         stream = cam.publish(args.serial, args.rtsp, channel=args.channel, key=args.key,
-                             stream_mode=args.stream)
+                             stream_mode=args.stream, proxy_port=0)
         print(t(f"Publishing {args.serial} ch{args.channel} to {redact_url(args.rtsp)} "
                 f"(Ctrl+C to stop)",
                 f"{args.serial} ch{args.channel} -> {redact_url(args.rtsp)} "
@@ -134,6 +147,81 @@ def cmd_stream(args) -> int:
     finally:
         cam.close()
     return 0
+
+
+def cmd_serve(args) -> int:
+    """Har kamera — lokal RTSP/WebRTC/HLS manzil (MediaMTX, talab bo'yicha ochiladi)."""
+    import json
+    import os
+    import socket
+    from cloudcam import serve
+    from cloudcam.settings import data_dir
+
+    if bool(args.read_user) != bool(args.read_pass):
+        sys.exit(t("--read-user and --read-pass go together",
+                   "--read-user va --read-pass birga beriladi"))
+    exposed = args.listen not in ("127.0.0.1", "localhost", "::1")
+    if exposed and not args.read_user:
+        print(t("Warning: the streams are readable by anyone who can reach this host; "
+                "consider --read-user/--read-pass.",
+                "Diqqat: oqimlarni bu kompyuterga yeta oladigan har kim ko'radi; "
+                "--read-user/--read-pass ni ko'rib chiqing."), file=sys.stderr)
+    cam = _cam(args)
+    try:
+        cams = cam.cameras()
+        if not cams:
+            sys.exit(t("No cameras found.", "Kamera topilmadi."))
+        binary = serve.find_mediamtx(args.mediamtx)
+        version = serve.mediamtx_version(binary) if binary else None
+        if version is not None and version < serve.MTX_MIN_VERSION:
+            sys.exit(t(f"MediaMTX {serve.version_str(version)} is too old; "
+                       f"{serve.version_str(serve.MTX_MIN_VERSION)} or newer is required",
+                       f"MediaMTX {serve.version_str(version)} juda eski; "
+                       f"{serve.version_str(serve.MTX_MIN_VERSION)} yoki yangisi kerak"))
+        config = serve.build_config(
+            cams, listen=args.listen, rtsp_port=args.rtsp_port, hls_port=args.hls_port,
+            webrtc_port=args.webrtc_port, rtp_port=args.rtp_port,
+            webrtc_udp_port=args.webrtc_udp_port, substream=not args.no_substream,
+            read_user=args.read_user, read_pass=args.read_pass, mtx_version=version)
+        if args.print_config:
+            print(json.dumps(config, indent=2))
+            return 0
+        path = os.path.abspath(args.config or os.path.join(data_dir(), "mediamtx.yml"))
+        serve.write_config(config, path)
+
+        host = {"0.0.0.0": socket.gethostname(), "": socket.gethostname(),
+                "::": socket.gethostname()}.get(args.listen, args.listen)
+        for name, rtsp, web in serve.urls(cams, host=host, rtsp_port=args.rtsp_port,
+                                          webrtc_port=args.webrtc_port,
+                                          substream=not args.no_substream):
+            print(f"{rtsp:<52} {name}")
+        if not args.no_substream:
+            print(t("(append /sub for the substream; WebRTC player: "
+                    f"http://{host}:{args.webrtc_port}/<path>)",
+                    "(/sub qo'shilsa — kichik oqim; WebRTC pleyer: "
+                    f"http://{host}:{args.webrtc_port}/<yo'l>)"))
+
+        if not binary:
+            need = serve.version_str(serve.MTX_MIN_VERSION)
+            print(t(f"MediaMTX (>= {need}) not found. Config written to {path}; install "
+                    f"MediaMTX (or put it in {os.path.join(data_dir(), 'bin')}) and run: "
+                    f"mediamtx \"{path}\"",
+                    f"MediaMTX (>= {need}) topilmadi. Konfiguratsiya {path} ga yozildi; "
+                    f"MediaMTX'ni o'rnating (yoki {os.path.join(data_dir(), 'bin')} ga "
+                    f"qo'ying) va ishga tushiring: mediamtx \"{path}\""), file=sys.stderr)
+            return 1
+
+        # Bola-jarayonlar (`cloudcam stream`) sessiyani shu token faylidan oladi;
+        # parol ularga UZATILMAYDI ([[Settings.child_env]]).
+        env = cam.settings.child_env()
+        env["CLOUDCAM_TOKEN_FILE"] = os.path.abspath(cam.settings.token_file)
+        env["CLOUDCAM_CAMKEY_FILE"] = os.path.abspath(cam.settings.camkey_file)
+        cam.start_token_refresh()
+        print(t(f"Serving {len(cams)} cameras with {binary} (Ctrl+C to stop)",
+                f"{len(cams)} kamera {binary} orqali (to'xtatish: Ctrl+C)"), flush=True)
+        return serve.run_mediamtx(binary, path, env)
+    finally:
+        cam.close()
 
 
 def cmd_keys(args) -> int:
@@ -464,7 +552,44 @@ def main(argv=None) -> int:
     stp_.add_argument("--stream", choices=["main", "sub", "auto"], default=None,
                       help=t("cloud stream to request (default: stream_mode setting)",
                              "bulutdan qaysi oqim (standart: stream_mode sozlamasi)"))
+    stp_.add_argument("--no-refresh", action="store_true",
+                      help=t("do not refresh the session (cloudcam serve does it)",
+                             "sessiyani yangilamaslik (buni cloudcam serve qiladi)"))
     stp_.set_defaults(fn=cmd_stream)
+
+    svp = sub.add_parser("serve", help=t("every camera as a local RTSP / WebRTC / HLS "
+                                         "stream (MediaMTX, opened on demand)",
+                                         "har kamera — lokal RTSP / WebRTC / HLS oqim "
+                                         "(MediaMTX, talab bo'yicha)"))
+    svp.add_argument("--listen", default="127.0.0.1",
+                     help=t("address to listen on; 0.0.0.0 for every interface "
+                            "(default 127.0.0.1)",
+                            "tinglanadigan manzil; hamma tarmoq uchun 0.0.0.0 "
+                            "(standart 127.0.0.1)"))
+    svp.add_argument("--rtsp-port", type=int, default=8554)
+    svp.add_argument("--webrtc-port", type=int, default=8889)
+    svp.add_argument("--hls-port", type=int, default=8888)
+    svp.add_argument("--webrtc-udp-port", type=int, default=8189,
+                     help=t("WebRTC media (UDP) port", "WebRTC media (UDP) porti"))
+    svp.add_argument("--rtp-port", type=int, default=8000,
+                     help=t("RTSP over UDP: RTP port (RTCP uses the next one)",
+                            "RTSP UDP: RTP porti (RTCP keyingisini oladi)"))
+    svp.add_argument("--no-substream", action="store_true",
+                     help=t("do not add the /sub paths", "/sub yo'llarini qo'shmaslik"))
+    svp.add_argument("--read-user", default=None)
+    svp.add_argument("--read-pass", default=None,
+                     help=t("require these credentials to read from other hosts",
+                            "boshqa kompyuterlardan o'qish uchun login/parol"))
+    svp.add_argument("--config", default=None, metavar="PATH",
+                     help=t("where to write mediamtx.yml (default: data directory)",
+                            "mediamtx.yml qayerga yozilsin (standart: ma'lumotlar papkasi)"))
+    svp.add_argument("--mediamtx", default=None, metavar="PATH",
+                     help=t("MediaMTX binary (default: from PATH)",
+                            "MediaMTX dasturi (standart: PATH dan)"))
+    svp.add_argument("--print-config", action="store_true",
+                     help=t("print the MediaMTX config and exit",
+                            "MediaMTX konfiguratsiyasini chiqarib, to'xtash"))
+    svp.set_defaults(fn=cmd_serve)
 
     kp = sub.add_parser("keys", help=t("fetch verification codes from the cloud",
                                       "tasdiqlash kodlarini bulutdan olish"))

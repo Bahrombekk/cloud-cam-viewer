@@ -123,9 +123,10 @@ def test_cli_stream_publishes_with_the_given_options(monkeypatch):
         def start_token_refresh(self):
             calls["refresh"] = True
 
-        def publish(self, serial, target, channel=1, *, key=None, stream_mode=None):
+        def publish(self, serial, target, channel=1, *, key=None, stream_mode=None,
+                    proxy_port=None):
             calls.update(serial=serial, target=target, channel=channel, key=key,
-                         mode=stream_mode)
+                         mode=stream_mode, port=proxy_port)
             return FakeStream()
 
         def close(self):
@@ -136,7 +137,8 @@ def test_cli_stream_publishes_with_the_given_options(monkeypatch):
                    "--channel", "2", "--stream", "sub", "--key", "ABCDEF"])
     assert rc == 0
     assert calls == {"refresh": True, "serial": "AB1", "target": "rtsp://u:pw@h:8554/cam/AB1_2",
-                     "channel": 2, "key": "ABCDEF", "mode": "sub", "closed": True}
+                     "channel": 2, "key": "ABCDEF", "mode": "sub", "port": 0,
+                     "closed": True}
 
 
 def test_cli_stream_rejects_a_bad_target_before_logging_in(monkeypatch):
