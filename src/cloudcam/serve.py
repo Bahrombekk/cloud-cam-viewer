@@ -66,6 +66,11 @@ def path_name(serial: str, channel: int, sub: bool = False) -> str:
     return f"cam/{serial}_{int(channel)}" + ("/sub" if sub else "")
 
 
+def rtsp_path_name(name: str, sub: bool = False) -> str:
+    """Oddiy RTSP kamera yo'li: `rtsp/<nom>` yoki `rtsp/<nom>/sub`."""
+    return f"rtsp/{name}" + ("/sub" if sub else "")
+
+
 def _quote(arg: str) -> str:
     """MediaMTX buyruq qatorini bo'sh joy bo'yicha bo'ladi — bo'sh joyli yo'l
     (masalan `C:\\Program Files\\...\\python.exe`) qo'shtirnoqqa olinadi."""
@@ -97,11 +102,18 @@ def build_config(cameras, *, python: str | None = None, listen: str = "127.0.0.1
                  read_user: str | None = None,
                  read_pass: str | None = None, start_timeout: int = START_TIMEOUT_S,
                  close_after: int = CLOSE_AFTER_S,
-                 mtx_version: tuple[int, int, int] | None = None) -> dict:
+                 mtx_version: tuple[int, int, int] | None = None,
+                 rtsp_cameras=()) -> dict:
     """MediaMTX konfiguratsiyasi (dict). `cameras` — `Camera` yoki (serial, kanal, nom).
 
     Seriyasi xavfsiz bo'lmagan kamera (`A-Z a-z 0-9 _ -` dan boshqa belgi) tashlab
-    ketiladi: u yo'l nomiga va buyruq qatoriga tushadi."""
+    ketiladi: u yo'l nomiga va buyruq qatoriga tushadi.
+
+    `rtsp_cameras` — oddiy RTSP kameralar ([[cloudcam.sources.rtsp.store.RtspCamera]]):
+    ular uchun proksi jarayon kerak emas, MediaMTX manbani o'zi tortadi
+    (`source` + `sourceOnDemand`). Transport kaliti YOZILMAYDI: uning nomi
+    versiyalar orasida o'zgargan (MediaMTX noma'lum kalitda ishga tushmaydi),
+    standarti esa baribir avtomatik (TCP/UDP)."""
     if bool(read_user) != bool(read_pass):
         raise ValueError("read_user and read_pass must be given together")
     python = python or sys.executable
@@ -122,6 +134,17 @@ def build_config(cameras, *, python: str | None = None, listen: str = "127.0.0.1
                 "runOnDemandStartTimeout": f"{int(start_timeout)}s",
                 "runOnDemandCloseAfter": f"{int(close_after)}s",
             }
+    for rc in rtsp_cameras:
+        if not _SAFE.fullmatch(rc.name):
+            continue
+        for sub, url in ((False, rc.url), (True, rc.sub_url)):
+            if url and (substream or not sub):
+                paths[rtsp_path_name(rc.name, sub)] = {
+                    "source": url,
+                    "sourceOnDemand": True,
+                    "sourceOnDemandStartTimeout": f"{int(start_timeout)}s",
+                    "sourceOnDemandCloseAfter": f"{int(close_after)}s",
+                }
 
     local_all = [{"action": a} for a in ("publish", "read", "playback")]
     readers = {"user": read_user or "any", "pass": read_pass or "", "ips": [],
@@ -163,9 +186,14 @@ def write_config(config: dict, path: str) -> str:
 
 
 def urls(cameras, *, host: str, rtsp_port: int = 8554, webrtc_port: int = 8889,
-         substream: bool = True) -> list[tuple[str, str, str]]:
+         substream: bool = True, rtsp_cameras=()) -> list[tuple[str, str, str]]:
     """[(nom, RTSP manzil, WebRTC sahifa)] — foydalanuvchiga ko'rsatish uchun."""
     out = []
+    for rc in rtsp_cameras:
+        if _SAFE.fullmatch(rc.name):
+            p = rtsp_path_name(rc.name)
+            out.append((rc.name, f"rtsp://{host}:{rtsp_port}/{p}",
+                        f"http://{host}:{webrtc_port}/{p}"))
     for cam in cameras:
         serial, channel = (cam.serial, cam.channel) if hasattr(cam, "serial") else cam[:2]
         name = getattr(cam, "name", "") or f"{serial} ch{channel}"

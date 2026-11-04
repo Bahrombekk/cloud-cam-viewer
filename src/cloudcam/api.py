@@ -245,6 +245,22 @@ class CloudCam:
                            width=width, height=height, key=key)
         return Stream(cs)
 
+    def open_rtsp(self, url: str, name: Optional[str] = None, *,
+                  width: Optional[int] = None, height: Optional[int] = None) -> Stream:
+        """Oddiy RTSP kamerani ochadi — bulut, login va kod kerak emas.
+
+        `url` — `rtsp://user:pass@host:554/...` yoki saqlangan kamera nomi
+        (`cloudcam rtsp add`). Kadrlar bulut kameralaridagi kabi `Stream` orqali."""
+        if not url.lower().startswith("rtsp://"):
+            from cloudcam.sources.rtsp import store
+            found = {c.name: c for c in store.load(self.settings.rtsp_file)}.get(url)
+            if found is None:
+                raise ValueError(f"no saved RTSP camera named {url!r} (cloudcam rtsp list)")
+            name, url = name or found.name, found.url
+        cs = self._mgr.add(f"rtsp:{name or url}", channel=0, width=width, height=height,
+                           url=url)
+        return Stream(cs)
+
     def _key_for(self, serial: str, key: Optional[str], auto_key: bool) -> str:
         """Kod: berilgani -> `cam_keys.json` -> (ruxsat bo'lsa) bulutdan -> "AUTO"."""
         if key is None:

@@ -9,6 +9,23 @@ minor versions; such changes are always listed here.
 ## [Unreleased]
 
 ### Added
+- **Plain RTSP cameras and NVRs** (`cloudcam.sources.rtsp`), next to the cloud ones:
+  - `cloudcam rtsp probe rtsp://...` checks a camera stage by stage (network, RTSP,
+    credentials, stream up to SETUP) and says which one failed; Basic and Digest auth
+    (with and without `qop`); codec, size, fps and audio from the SDP (size from the SPS
+    when the camera does not state it); finds the substream.
+  - `cloudcam rtsp scan HOST --user --pass [--save NAME]` detects the vendor
+    (Hikvision, Dahua/Amcrest, Uniview, Reolink, Axis, Holowits) and lists every channel
+    that really streams; channels an NVR advertises but refuses at SETUP are skipped.
+  - `cloudcam rtsp add|list|remove`: saved in `<data dir>/rtsp_cameras.json` (0600, the
+    URLs hold passwords); `list` hides the passwords.
+  - Saved RTSP cameras appear in `cloudcam serve` (pulled by MediaMTX on demand, no
+    proxy process; `rtsp/<name>` and `rtsp/<name>/sub`), in `cloudcam view` and in
+    `cloudcam snapshot NAME|rtsp://...`; `CloudCam.open_rtsp()` in the API. Without a
+    cloud account (or with `--no-cloud`) `serve` and `view` show only the RTSP cameras.
+  - Adapted from kamera-xarita (same author, MIT), where this code vets ~155 production
+    cameras. Faster first frame (ONVIF keyframe request) and automatic TCP/UDP choice
+    follow in 0.5.
 - `cloudcam stream SERIAL --rtsp URL` and `CloudCam.publish()` publish a camera to an
   RTSP server (MediaMTX, go2rtc, ...) without transcoding, reconnecting like the
   viewer does. The decrypting proxy emits raw Annex-B without timestamps, so packets are
@@ -43,6 +60,10 @@ minor versions; such changes are always listed here.
   attempted (`LoginRequired`) instead of sending an empty password.
 
 ### Fixed
+- `keys.set_code()` (used by the RTSP store helpers and the library) upper-cased the
+  verification code. The code is the AES key and is case-sensitive; a code changed in the
+  app ("1q2w...") was stored wrongly and the camera reported "wrong code" (10 cameras on
+  a live account). It is now stored exactly as given, like `cloudcam code set`.
 - **Concurrent session refresh.** Processes sharing `token.json` (viewer, CLI, the
   `cloudcam stream` processes under `serve`) could refresh at the same time; the refresh
   token rotates, so all but one sent a stale token, were rejected and fell back to a full

@@ -90,17 +90,26 @@ def _fullscreen(frame, label: str, st: dict):
     return big
 
 
-def run(cam, args=None, *, cameras=None) -> int:
-    """Kameralarni grid'da ko'rsatadi. `cam` — login qilingan CloudCam.
+def run(cam, args=None, *, cameras=None, rtsp_cameras=(), cloud: bool = True) -> int:
+    """Kameralarni grid'da ko'rsatadi. `cam` — CloudCam (bulut uchun login qilingan).
 
-    `cameras` — ko'rsatiladigan [[cloudcam.api.Camera]] ro'yxati (standart: hammasi)."""
-    cam.start_token_refresh(interval=3600)
-    cams = list(cameras) if cameras is not None else cam.cameras()
-    if not cams:
+    `cameras` — ko'rsatiladigan [[cloudcam.api.Camera]] ro'yxati (standart: hammasi);
+    `rtsp_cameras` — oddiy RTSP kameralar ([[cloudcam.sources.rtsp.store.RtspCamera]]),
+    ular bulut kameralari yonida chiqadi. `cloud=False` — faqat RTSP (hisobsiz)."""
+    cams = []
+    if cloud:
+        cam.start_token_refresh(interval=3600)
+        cams = list(cameras) if cameras is not None else cam.cameras()
+    rtsp_cams = list(rtsp_cameras)
+    if not cams and not rtsp_cams:
         print(t("No cameras found.", "Kamera topilmadi."))
         return 1
     streams = [cam.open(c.serial, channel=c.channel) for c in cams]
     labels = [c.name[:22] for c in cams]
+    for rc in rtsp_cams:
+        # Grid uchun kichik oqim (bo'lsa) — xuddi bulutdagi substream kabi.
+        streams.append(cam.open_rtsp(rc.sub_url or rc.url, rc.name))
+        labels.append(rc.name[:22])
     print(t(f"{len(streams)} cameras · q=quit · g=grid · 1-9=fullscreen · s=status",
             f"{len(streams)} kamera · q=chiqish · g=grid · 1-9=to'liq · s=holat"))
 
