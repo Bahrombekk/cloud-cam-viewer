@@ -33,7 +33,8 @@ _sys.path[:0] = [_os.getcwd(),
 import config
 
 # token.json / cam_keys.json config.py yonida turadi — qayerdan ishga tushirilsa ham.
-_os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
+if getattr(config, "__file__", None):
+    _os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
 
 from cloudcam.codec.nal import HEVC_VIDEO_PT
 from cloudcam.codec.ps import PsStreamDecryptor
