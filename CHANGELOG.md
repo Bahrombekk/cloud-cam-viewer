@@ -26,6 +26,12 @@ minor versions; such changes are always listed here.
   off, 25 s start timeout, 30 s read timeout. MediaMTX is found on PATH or in
   `<data dir>/bin/`; the version is detected so version-specific keys are only written
   where MediaMTX knows them. Verified end to end with MediaMTX 1.20.0 and a live camera.
+- `cloudcam serve --install-mediamtx [--mediamtx-version X.Y.Z]` installs the official
+  MediaMTX build for this platform (Windows/Linux amd64, Linux arm64/armv7/armv6,
+  macOS amd64/arm64) into `<data dir>/bin/`: downloaded over HTTPS from the GitHub
+  release, SHA-256 checked against its `checksums.sha256`, only the binary and licence
+  taken from the archive, verified with `--version` before replacing an existing copy.
+  The binary is not stored in the repository.
 - Account commands work with only a saved session; without a password no login is
   attempted (`LoginRequired`) instead of sending an empty password.
 

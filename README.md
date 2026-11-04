@@ -282,7 +282,7 @@ Global options, placed before the command: `--email`, `--password`,
 | `cloudcam snapshot SERIAL [--channel N] [--key CODE] [--out FILE] [--quality Q] [--timeout S]` | Save one JPEG frame (default `<SERIAL>_ch<N>.jpg`, quality 85, timeout 15 s) |
 | `cloudcam view` | Grid viewer with every camera on the account |
 | `cloudcam stream SERIAL --rtsp URL [--channel N] [--stream main\|sub\|auto] [--key CODE]` | Publish one camera to an RTSP server (MediaMTX, go2rtc, ...) without transcoding, until Ctrl+C |
-| `cloudcam serve [--listen ADDR] [--read-user U --read-pass P] [--no-substream] [--print-config]` | Every camera as an on-demand RTSP / WebRTC / HLS stream through MediaMTX; see [RTSP gateway](#rtsp-gateway) |
+| `cloudcam serve [--listen ADDR] [--read-user U --read-pass P] [--no-substream] [--install-mediamtx] [--print-config]` | Every camera as an on-demand RTSP / WebRTC / HLS stream through MediaMTX; see [RTSP gateway](#rtsp-gateway) |
 | `cloudcam status [SERIAL ...]` | Online state, disks, encryption and privacy mode; exits with 1 if a device is offline or a disk is not OK |
 | `cloudcam events [SERIAL ...] [--limit N] [--save-images DIR]` | Recent events (default 20), optionally saving decrypted pictures |
 | `cloudcam events --watch [--save-images DIR]` | Live push events until Ctrl+C (`events` extra) |
@@ -383,7 +383,11 @@ rtsp://127.0.0.1:8554/cam/AB1234567_2                Office - Yard
 | `cam/<SERIAL>_<CHANNEL>/sub` | Substream, or the main stream on cameras without one |
 
 MediaMTX is looked up on `PATH`, then in `<data dir>/bin/`; `--mediamtx PATH` sets it
-explicitly. Without it, `cloudcam serve` still writes the config
+explicitly. `cloudcam serve --install-mediamtx` downloads the official build for this
+platform from the MediaMTX GitHub release (1.20.0 by default, `--mediamtx-version X.Y.Z`
+to choose), checks its SHA-256 against the release's `checksums.sha256`, and installs
+only the binary and its licence into `<data dir>/bin/`; an installed copy of the same
+version is not downloaded again. Without it, `cloudcam serve` still writes the config
 (`<data dir>/mediamtx.yml`, or `--config PATH`) and tells you how to start it;
 `--print-config` prints it instead.
 

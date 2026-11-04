@@ -160,6 +160,14 @@ def cmd_serve(args) -> int:
     if bool(args.read_user) != bool(args.read_pass):
         sys.exit(t("--read-user and --read-pass go together",
                    "--read-user va --read-pass birga beriladi"))
+    if args.install_mediamtx:
+        # Hisob kerak emas — login'dan OLDIN.
+        from cloudcam import mtx_install
+        try:
+            args.mediamtx = mtx_install.install(args.mediamtx_version
+                                                or mtx_install.DEFAULT_VERSION)
+        except mtx_install.InstallError as e:
+            sys.exit(str(e))
     exposed = args.listen not in ("127.0.0.1", "localhost", "::1")
     if exposed and not args.read_user:
         print(t("Warning: the streams are readable by anyone who can reach this host; "
@@ -586,6 +594,14 @@ def main(argv=None) -> int:
     svp.add_argument("--mediamtx", default=None, metavar="PATH",
                      help=t("MediaMTX binary (default: from PATH)",
                             "MediaMTX dasturi (standart: PATH dan)"))
+    svp.add_argument("--install-mediamtx", action="store_true",
+                     help=t("download the official MediaMTX build for this platform "
+                            "(SHA-256 verified) into the data directory first",
+                            "avval shu platformaga mos rasmiy MediaMTX'ni ma'lumotlar "
+                            "papkasiga yuklash (SHA-256 tekshiriladi)"))
+    svp.add_argument("--mediamtx-version", default=None, metavar="X.Y.Z",
+                     help=t("MediaMTX version for --install-mediamtx (default: the tested one)",
+                            "--install-mediamtx uchun versiya (standart: sinalgani)"))
     svp.add_argument("--print-config", action="store_true",
                      help=t("print the MediaMTX config and exit",
                             "MediaMTX konfiguratsiyasini chiqarib, to'xtash"))

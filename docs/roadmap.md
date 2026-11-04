@@ -154,9 +154,9 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
 - [x] **`cloudcam serve` killed hard** (0.4): `core.procutil.popen_bound` (Windows job
   object, Linux PDEATHSIG). macOS has neither; a watcher process would be needed there.
 - [ ] ISUP paths in `cloudcam serve` (MediaMTX `source: rtsp://` to the bridge).
-- [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), `cloudcam serve
-  --install-mediamtx` (official release for the platform, checksum verified), Frigate and
-  Home Assistant examples.
+- [x] **0.4**: `cloudcam serve --install-mediamtx` (official release, SHA-256 checked).
+- [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), Frigate and Home
+  Assistant examples.
 - [ ] **0.4 — `cloudcam serve` (overall).** Every camera as a local RTSP / WebRTC stream through
   MediaMTX or go2rtc, with one upstream cloud session per camera shared by any number
   of viewers (fan-out in the media layer, never one cloud stream per viewer). Usable
