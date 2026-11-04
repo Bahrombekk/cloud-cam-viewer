@@ -5,8 +5,8 @@ Bu kod = videoni ochuvchi kalit. EZVIZ ilovasida kamerani ochganda so'raydigan
 yoki qurilma yorlig'idagi kod. Saqlangach app.py o'sha kamerani avtomatik dekodlaydi.
 
 Ishga tushirish:
-    python scripts/set_code.py BD8712447 SCXYKW
-    python scripts/set_code.py BD8712447 SCXYKW BD8712513 ABCDEF   # bir nechta (juft-juft)
+    python scripts/set_code.py AB2345678 ABCDEF
+    python scripts/set_code.py AB2345678 ABCDEF AB4567890 ABCDEF   # bir nechta (juft-juft)
 """
 
 import sys

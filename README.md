@@ -79,16 +79,16 @@ cloudcam view         # 3. grid viewer: 1–9 fullscreen · g grid · s status �
 
 ```
 $ cloudcam cameras
-BD7793665  ch1  Warehouse
-BD8712447  ch1  Office - Entrance
-BD8712447  ch2  Office - Yard
-BF1916346  ch1  Storage
+AB1234567  ch1  Warehouse
+AB2345678  ch1  Office - Entrance
+AB2345678  ch2  Office - Yard
+AB3456789  ch1  Storage
 ```
 
 Grab a single frame without a window:
 
 ```bash
-cloudcam snapshot BD8712447 --channel 2 --out yard.jpg
+cloudcam snapshot AB2345678 --channel 2 --out yard.jpg
 ```
 
 Or use it from Python, with no config file and no OpenCV needed:
@@ -98,7 +98,7 @@ from cloudcam import CloudCam
 
 cam = CloudCam(email="you@example.com", password="…", platform="hikconnect")
 cam.login()
-stream = cam.open("BD8712447", channel=1)
+stream = cam.open("AB2345678", channel=1)
 for frame in stream.frames():      # numpy BGR arrays
     ...                            # your detector / recorder here
 ```
@@ -165,9 +165,9 @@ fetched without another code:
 
 ```
 $ cloudcam keys --code 123456
-BD7793665  KJWQTZ
-BD8712447  SCXYKW
-BF1916346  ABCDEF
+AB1234567  QWERTY
+AB2345678  ABCDEF
+AB3456789  ABCDEF
 ```
 
 Re-running is cheap — codes already stored are not re-fetched:
@@ -181,8 +181,8 @@ A camera that is offline fails on its own without stopping the rest:
 
 ```
 $ cloudcam keys
-BD8712447  SCXYKW
-BF1916346  ERROR: Device offline (2009)
+AB2345678  ABCDEF
+AB3456789  ERROR: Device offline (2009)
 ```
 
 The result is `cam_keys.json` — a flat serial → code map (see
@@ -190,9 +190,9 @@ The result is `cam_keys.json` — a flat serial → code map (see
 
 ```json
 {
-  "BD7793665": "KJWQTZ",
-  "BD8712447": "SCXYKW",
-  "BF1916346": "ABCDEF"
+  "AB1234567": "QWERTY",
+  "AB2345678": "ABCDEF",
+  "AB3456789": "ABCDEF"
 }
 ```
 
@@ -216,10 +216,10 @@ upper case (label codes are upper case; a code changed in the app may not be).
 encrypted, or no keyframe yet):
 
 ```
-$ python scripts/check_code.py BD8712447 SCXYKW
-🔎 Checking: BD8712447 ch1 (code: SCXYKW) ...
-✅ BD8712447 ch1: CODE IS CORRECT! Stream decrypted.
-   💾 Saved to cam_keys.json: BD8712447 -> SCXYKW
+$ python scripts/check_code.py AB2345678 ABCDEF
+🔎 Checking: AB2345678 ch1 (code: ABCDEF) ...
+✅ AB2345678 ch1: CODE IS CORRECT! Stream decrypted.
+   💾 Saved to cam_keys.json: AB2345678 -> ABCDEF
 ```
 
 **Viewer controls:** `q` quit · `g` grid · `1`–`9` fullscreen camera · `s` status

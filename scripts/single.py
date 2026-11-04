@@ -4,8 +4,8 @@ Bitta kamerani 24/7 uzilishsiz ko'rish.
 Stream uzilsa avtomatik qayta ulanadi, token avtomatik yangilanadi.
 
 Ishga tushirish:
-    python scripts/single.py GK8973616
-    python scripts/single.py GK8973616 --decrypt
+    python scripts/single.py AB5678901
+    python scripts/single.py AB5678901 --decrypt
 """
 
 import sys

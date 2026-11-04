@@ -12,7 +12,7 @@ each one measured against real cameras:
   and breaks up in between. The decryptor decides from the stream itself using a
   *structure* test (slice headers repeat, ciphertext is random; measured
   separation on a real camera: clear **1.00** vs decrypted **0.12**).
-  A/B on the same camera (`BD8712447`, 25 s of live stream, same account,
+  A/B on the same camera (`AB2345678`, 25 s of live stream, same account,
   decoded with `ffmpeg -f hevc`):
 
   | | assumed "inter is clear" | detected |
@@ -20,8 +20,8 @@ each one measured against real cameras:
   | decoder errors | **439** (`PPS id out of range`, `PPS changed between slices`) | **0** |
   | frames decoded | **8** (0.53 s) | **279** (18.6 s) |
 
-  Two more cameras from the same account after the change: HEVC `BF1916346`
-  181 frames / 0 errors, H.264 `BD7793665` 192 frames / 1 error.
+  Two more cameras from the same account after the change: HEVC `AB3456789`
+  181 frames / 0 errors, H.264 `AB1234567` 192 frames / 1 error.
   Only real P/B slices are sampled: SEI/AUD bodies are not slice headers, and a
   clear SEI mixed into the sample can drag an encrypted camera to a "clear" tie.
 - **Lost RTP fragments do not smear the picture.** A NAL split over several RTP
