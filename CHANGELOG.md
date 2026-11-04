@@ -8,6 +8,8 @@ minor versions; such changes are always listed here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-04
+
 ### Added
 - **Plain RTSP cameras and NVRs** (`cloudcam.sources.rtsp`), next to the cloud ones:
   - `cloudcam rtsp probe rtsp://...` checks a camera stage by stage (network, RTSP,
@@ -275,6 +277,7 @@ First tagged version. Summarises everything since the initial commit.
   `0600` permissions; the verification code reaches child processes through the
   environment, never the command line.
 
-[Unreleased]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Bahrombekk/cloud-cam-viewer/releases/tag/v0.2.0

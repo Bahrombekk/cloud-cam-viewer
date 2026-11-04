@@ -11,7 +11,7 @@ Yuqori darajali API (tavsiya etiladi):
 Quyi darajali qismlar ham ochiq: CloudClient, StreamManager.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from cloudcam.api import Camera, CloudCam, Stream
 from cloudcam.sources.cloud.client import CloudClient, MfaRequired

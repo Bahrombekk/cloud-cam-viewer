@@ -1,6 +1,6 @@
 # Roadmap and engineering backlog
 
-Status as of 2026-11-04. Latest release: **0.3.0** (see [CHANGELOG.md](../CHANGELOG.md)).
+Status as of 2026-11-04. Latest release: **0.4.0** (see [CHANGELOG.md](../CHANGELOG.md)).
 
 This document is the working plan behind the short roadmap in the
 [README](../README.md#roadmap). Each open item states the problem, where it lives and
@@ -159,7 +159,7 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
   camera; Frigate and Home Assistant examples (not run against Frigate / HA yet).
 - [ ] Image size (1 GB, mostly ffmpeg's dependencies): a static ffmpeg or a multi-stage
   build could halve it; publish multi-arch images to a registry.
-- [ ] **0.4 — `cloudcam serve` (overall).** Every camera as a local RTSP / WebRTC stream through
+- [x] **0.4 — `cloudcam serve` (overall), released in 0.4.0.** Every camera as a local RTSP / WebRTC stream through
   MediaMTX or go2rtc, with one upstream cloud session per camera shared by any number
   of viewers (fan-out in the media layer, never one cloud stream per viewer). Usable
   as a Frigate or Home Assistant source; Docker image.
