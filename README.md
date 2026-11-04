@@ -5,6 +5,10 @@
 [![License](https://img.shields.io/badge/license-MIT%20AND%20Apache--2.0-green)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Bahrombekk/cloud-cam-viewer?include_prereleases)](https://github.com/Bahrombekk/cloud-cam-viewer/releases)
 
+<p align="center">
+  <img src="docs/images/cloudcam-0.4.0.png" alt="cloudcam 0.4.0: cloud and RTSP cameras decrypted locally and served as RTSP, WebRTC and HLS through MediaMTX" width="900">
+</p>
+
 Python client for EZVIZ and Hik-Connect cloud cameras. It logs in to the cloud the
 way the official app does, decrypts the video locally with the camera's verification
 code, and delivers plain H.264/H.265 frames through a CLI, a multi-camera viewer or a
