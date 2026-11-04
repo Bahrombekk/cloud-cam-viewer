@@ -12,7 +12,7 @@ import pytest
 from cloudcam import cli, serve, settings
 from cloudcam.api import Camera
 from cloudcam.sources.rtsp import channel_path, store
-from tests.test_rtsp_probe import SDP, FakeCamera
+from test_rtsp_probe import SDP, FakeCamera
 
 URL = "rtsp://admin:s3cret@192.168.1.64:554/Streaming/Channels/101"
 SUB = "rtsp://admin:s3cret@192.168.1.64:554/Streaming/Channels/102"
