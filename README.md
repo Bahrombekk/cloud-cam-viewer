@@ -8,8 +8,8 @@
 Python client for EZVIZ and Hik-Connect cloud cameras. It logs in to the cloud the
 way the official app does, decrypts the video locally with the camera's verification
 code, and delivers plain H.264/H.265 frames through a CLI, a multi-camera viewer or a
-Python API. It also includes a client for an ISUP 5.0 bridge, through which Hikvision
-devices can stream without the cloud (the bridge itself is a separate component, see
+Python API. Hikvision devices can also stream without the cloud over ISUP 5.0 through
+the included [`isup-bridge`](isup-bridge/), which needs Hikvision's ISUP SDK (see
 [ISUP 5.0](#isup-50)).
 
 > **Note.** This is an unofficial, reverse-engineered client, not affiliated with
@@ -78,7 +78,8 @@ replace them.
 - **NVIDIA NVDEC** decoding when available, with automatic software fallback.
 - **24/7 operation**: automatic reconnect, frozen-stream watchdog, and a jitter buffer
   that evens out the cloud's burst delivery.
-- **ISUP 5.0 bridge client** (`IsupBridge`, `cloudcam isup`).
+- **ISUP 5.0** (experimental): a C++ bridge in [`isup-bridge/`](isup-bridge/) and its
+  client (`IsupBridge`, `cloudcam isup`, `CloudCam.open_isup()`).
 - **Test suite** of more than 250 tests that run without a cloud account or network.
 
 ## Requirements
@@ -352,18 +353,20 @@ concurrent streams, and occasional corruption. With ISUP 5.0 the Hikvision devic
 connects directly to your server, so no relay, verification code or decryption is
 involved.
 
-**The bridge is not part of this repository.** The ISUP protocol is implemented in
-Hikvision's closed SDK, which cannot be redistributed, so it has to run as a separate
+The ISUP protocol is implemented in Hikvision's closed SDK, so it runs in a separate
 process built against that SDK, in the same way that decoding runs in an external
-`ffmpeg`. `cloudcam` contains only the client: it controls the bridge over HTTP and
-reads the RTSP stream the bridge publishes.
+`ffmpeg`. The bridge's source, Dockerfile and a compose file with MediaMTX are in
+[`isup-bridge/`](isup-bridge/); **the SDK itself may not be redistributed and is not
+included**, so you have to obtain it from Hikvision before building (see
+[isup-bridge/README.md](isup-bridge/README.md)). `cloudcam` controls the bridge over
+HTTP and reads the RTSP stream it publishes.
 
 ```
 camera --ISUP 17660/17661--> isup-bridge --RTSP (no transcode)--> cloudcam
 ```
 
-The client expects this bridge API (all bodies are plain text, one item per line;
-`X-Bridge-Token` is sent when `isup_token` is set):
+The bridge API (all bodies are plain text, one item per line; `X-Bridge-Token` is sent
+when `isup_token` is set):
 
 | Request | Purpose |
 |---|---|
@@ -372,8 +375,9 @@ The client expects this bridge API (all bodies are plain text, one item per line
 | `PUT /keys` | Device keys: `dev <ID> <KEY>`, `block <ID>`, `prefix <PREFIX> <KEY>`, `default on\|off` |
 | `PUT /want` | Streams to keep open: `<ID> <CHANNEL> <0=main\|1=sub>` |
 
-Streams are expected at `<isup_rtsp_base>/isup/<ID>/<CHANNEL>` (substream: `/sub`
-appended). The cloud path does not depend on the bridge.
+Streams are published at `<isup_rtsp_base>/isup/<ID>/<CHANNEL>` (substream: `/sub`
+appended). The cloud path does not depend on the bridge, and the Python package does
+not contain it.
 
 Measured with a bridge on a DS-TCG406-E, firmware V5.4.0:
 
@@ -428,7 +432,7 @@ Verified on real hardware so far. Reports for other devices are welcome via the
 | Hik-Connect cloud | IP camera | RTP, H.265 | encrypted | Verified |
 | Hik-Connect cloud | IP camera | RTP, H.264 | encrypted | Verified |
 | Hik-Connect cloud | IP camera | MPEG-PS, H.264/H.265 | selective / whole NAL | Verified |
-| ISUP 5.0 (own bridge) | DS-TCG406-E, fw V5.4.0 | RTSP via bridge | none | Verified |
+| ISUP 5.0 (`isup-bridge`) | DS-TCG406-E, fw V5.4.0 | RTSP via bridge | none | Verified |
 | EZVIZ cloud | — | — | — | Not yet verified, reports wanted |
 
 Status, events, recordings and cloud-video listing were verified on a live Hik-Connect

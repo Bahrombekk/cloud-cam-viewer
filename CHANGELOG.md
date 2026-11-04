@@ -11,6 +11,11 @@ minor versions; such changes are always listed here.
 ## [0.3.0] - 2026-11-04
 
 ### Added
+- **`isup-bridge/`**: the C++ ISUP 5.0 bridge that `IsupBridge` / `cloudcam isup` talk to,
+  with a Dockerfile, a compose file that also starts MediaMTX, and documentation (SDK
+  setup, device configuration, control API, log lines). Experimental: verified with one
+  device model. The Hikvision ISUP SDK is not included and is git-ignored, because it
+  may not be redistributed.
 - `cloudcam code check SERIAL [CODE] [--channel N|all]` verifies a verification code on
   the live stream and saves it if correct; `cloudcam code set` stores codes as typed.
   `check` needs only the saved session, not the password. The logic moved from

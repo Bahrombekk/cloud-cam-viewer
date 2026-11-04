@@ -42,3 +42,11 @@ vtm-*.json
 *.egg-info/
 build/
 dist/
+
+# isup-bridge: Hikvision ISUP SDK (tarqatib bo'lmaydi), sirlar va loglar
+isup-bridge/sdk/*
+!isup-bridge/sdk/.gitkeep
+isup-bridge/inc/*
+!isup-bridge/inc/.gitkeep
+isup-bridge/.env
+isup-bridge/logs/
