@@ -42,19 +42,19 @@ minor versions; such changes are always listed here.
   `Stream`, `Camera`, `Settings`, the `cloudcam` CLI) is unchanged.
 - The helper scripts moved to `scripts/` (`python scripts/app.py`, …); `python -m cloudcam`
   runs the CLI.
-- The version has a single source of truth, `cloudcam/__init__.py`;
+- The version has a single source of truth, `src/cloudcam/__init__.py`;
   `pyproject.toml` reads it dynamically.
 - **`pyezvizapi` is no longer a dependency.** The part of it we used — the VTM/VTDU
   cloud stream transport (packet framing, StreamInfo/keepalive protobuf, `ysproto://`
-  URL, RTP payload, VTDU token, page list) — now lives in `cloudcam/vtm/`, adapted from
+  URL, RTP payload, VTDU token, page list) — now lives in `src/cloudcam/sources/cloud/vtm/`, adapted from
   pyezvizapi 1.0.5.0 (Apache License 2.0, (c) Renier Moorcroft; notice and full
-  license text in `cloudcam/vtm/LICENSE-pyezvizapi`). Before, the project replaced five
+  license text in `src/cloudcam/sources/cloud/vtm/LICENSE-pyezvizapi`). Before, the project replaced five
   of the library's internal functions at import time, so an upstream release could
   break it silently. The vendored code was checked byte-for-byte against upstream output.
 - The substream is a `stream_type` argument of the URL builder instead of a regex over
   a monkeypatched library function: no longer racy between proxy threads, and an
   upstream URL format change can no longer silently turn it into the main stream.
-- Unencrypted cameras go through `cloudcam.decrypt_proxy` (clear streams are detected
+- Unencrypted cameras go through the decrypting proxy (`cloudcam.sources.cloud.proxy`) (clear streams are detected
   and passed through) instead of a separate `python -m pyezvizapi ... stream proxy`.
 - `list_cameras()` / `CloudCam.cameras()` use the session's own `CloudClient` (and the
   account metadata cache) instead of building a second client.
@@ -73,6 +73,39 @@ minor versions; such changes are always listed here.
 - The VTDU auth address taken from the cloud's service URLs is checked against the
   allowed cloud domains before the session id is sent to it.
 - Lint errors (unused imports/variables, over-long lines) — `ruff check .` is clean.
+- **Wrong "wrong verification code"**: an MPEG-PS stream joined mid-GOP (24+ P-slices
+  before the first VPS/SPS) was declared a wrong code and the camera stopped for good.
+- A single malformed RTP packet killed the session (proxy + ffmpeg restart); late
+  packets moved the sequence tracker backwards (one reorder counted as three gaps).
+- Unbounded (length 0) video PES was cut at the first NAL start code inside it.
+- A short stall on a working stream was flagged OFFLINE (15–60 s wait instead of ~1 s).
+- Restart storm: the reconnect backoff reset as soon as ffmpeg started, and every
+  failed attempt re-fetched page list + VTDU token. Backoff now resets on the first
+  frame and metadata refresh is limited to once per 30 s per account.
+- Missing ffmpeg showed "Connecting..." forever; it is now reported.
+- One empty attempt disabled GPU decoding for the rest of the run (now 3 in a row).
+- Memory grew without bound in MPEG-TS passthrough mode; parameter sets were queued
+  with the previous P-frame instead of the keyframe they belong to.
+- On Windows two proxies could bind the same port (SO_REUSEADDR).
+- ffmpeg read the console (`-nostdin` / `stdin=DEVNULL`).
+- Refreshed sessions were not saved: the rotated refresh token was lost and the next
+  run fell back to a full password login (CAPTCHA / 2FA risk). A network error during
+  refresh also forced a password login; it is now raised instead.
+- A saved token was resumed even when `email` / `platform` had been changed.
+- `scripts/check_code.py` could overwrite `cam_keys.json` with a single entry and
+  wrote it world-readable; it now uses the library's atomic 0600 writer.
+- The release workflow never found the CHANGELOG section (gawk regex escaping).
+
+### Security
+- The password and ISUP token no longer appear in `repr(Settings)` and are no longer
+  inherited by the per-camera child processes from `CLOUDCAM_PASSWORD` /
+  `CLOUDCAM_ISUP_TOKEN`.
+- Real device serials and a verification code that were used as examples in the
+  docs were replaced with placeholders; a test now rejects non-placeholder serials.
+- ISUP bridge commands reject device ids / keys containing whitespace or newlines
+  (a device-supplied id could inject extra command lines).
+- Packaging declares `MIT AND Apache-2.0` and ships a NOTICE for the code adapted
+  from pyezvizapi.
 
 ## [0.2.0] - 2026-11-03
 

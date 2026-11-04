@@ -214,7 +214,7 @@ def get_cloud_stream_info(
     resource = find_vtm_resource(resources, serial, channel=channel)
     if resource is None:
         ch = f" channel {channel}" if channel is not None else ""
-        # Matn muhim: decrypt_proxy._is_missing_resource shuni qidiradi.
+        # Matn muhim: stream._is_missing_resource shuni qidiradi.
         raise VtmError(f"Could not find VTM resource for serial {serial}{ch}")
 
     resource_id = resource.get("resourceId")

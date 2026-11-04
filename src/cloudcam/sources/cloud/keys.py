@@ -1,6 +1,6 @@
 """Kamera tasdiqlash kodlari (verification code) — saqlash va BULUTDAN olish.
 
-Tasdiqlash kodi = oqimni ochuvchi AES kaliti ([[decrypt_proxy]]). Ilgari uni
+Tasdiqlash kodi = oqimni ochuvchi AES kaliti ([[cloudcam.codec]]). Ilgari uni
 faqat QO'LDA kiritish mumkin edi (`set_code.py`, `check_code.py`): 150 kamerali
 hisobda bu har bir qurilma yorlig'ini o'qib chiqishni anglatardi va oflayn NVR
 uchun umuman imkonsiz edi.

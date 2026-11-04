@@ -5,12 +5,12 @@
 O'zgarishlar:
   * faqat jonli oqim uchun kerakli qism qoldirildi (lokal oqim, cloud replay,
     trace, VTDU peer/stop so'rovlari va PS deshifrlash olib tashlandi —
-    deshifrlash `cloudcam.decrypt_proxy` da o'zimizniki);
+    deshifrlash `cloudcam.codec` da o'zimizniki);
   * [[build_vtm_url]] ga `stream_type` qo'shildi (substream uchun). Ilgari
     biz tayyor URL'dagi `stream=1` ni regex bilan almashtirardik — upstream
     format o'zgarsa bu JIMGINA ishlamay qolardi;
   * xatolar `VtmError` / `DeviceOffline` (xabar matnlari saqlangan:
-    `decrypt_proxy` "offline"/"unreachable" ni qidiradi).
+    proxy "offline"/"unreachable" ni qidiradi).
 """
 
 from __future__ import annotations
