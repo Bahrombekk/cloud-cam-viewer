@@ -422,6 +422,9 @@ cameras:
 Single camera without MediaMTX management: `cloudcam stream SERIAL --rtsp URL`
 publishes to an RTSP server you already run.
 
+Run it in Docker (cloudcam, ffmpeg and MediaMTX in one image): [docs/docker.md](docs/docker.md).
+Frigate, Home Assistant and other clients: [docs/integrations.md](docs/integrations.md).
+
 ## ISUP 5.0
 
 The cloud path depends on the cloud: 4-14 s to the first frame, a limit on

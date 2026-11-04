@@ -53,3 +53,6 @@ isup-bridge/logs/
 
 # token.json uchun jarayonlararo qulf fayllari
 *.lock
+
+# Docker: hisob ma'lumotlari (parol)
+docker/.env

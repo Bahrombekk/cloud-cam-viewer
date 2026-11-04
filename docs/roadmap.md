@@ -155,8 +155,10 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
   object, Linux PDEATHSIG). macOS has neither; a watcher process would be needed there.
 - [ ] ISUP paths in `cloudcam serve` (MediaMTX `source: rtsp://` to the bridge).
 - [x] **0.4**: `cloudcam serve --install-mediamtx` (official release, SHA-256 checked).
-- [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), Frigate and Home
-  Assistant examples.
+- [x] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), verified with a live
+  camera; Frigate and Home Assistant examples (not run against Frigate / HA yet).
+- [ ] Image size (1 GB, mostly ffmpeg's dependencies): a static ffmpeg or a multi-stage
+  build could halve it; publish multi-arch images to a registry.
 - [ ] **0.4 — `cloudcam serve` (overall).** Every camera as a local RTSP / WebRTC stream through
   MediaMTX or go2rtc, with one upstream cloud session per camera shared by any number
   of viewers (fan-out in the media layer, never one cloud stream per viewer). Usable

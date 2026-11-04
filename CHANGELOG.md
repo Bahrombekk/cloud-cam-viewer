@@ -26,6 +26,13 @@ minor versions; such changes are always listed here.
   off, 25 s start timeout, 30 s read timeout. MediaMTX is found on PATH or in
   `<data dir>/bin/`; the version is detected so version-specific keys are only written
   where MediaMTX knows them. Verified end to end with MediaMTX 1.20.0 and a live camera.
+- **Docker image** (`docker/Dockerfile`, `docker/docker-compose.yml`, [docs/docker.md](docs/docker.md)):
+  cloudcam, ffmpeg and MediaMTX (installed with the checksum-verified installer for the
+  build platform) running `cloudcam serve` as a non-root user, data in a `/data` volume,
+  ports published on 127.0.0.1 by default. `.dockerignore` is an allow-list, so secrets in
+  the checkout never reach the image. Verified with a live camera through the container
+  (12 fps, median frame gap 0.082 s).
+- Frigate and Home Assistant examples: [docs/integrations.md](docs/integrations.md).
 - `cloudcam serve --install-mediamtx [--mediamtx-version X.Y.Z]` installs the official
   MediaMTX build for this platform (Windows/Linux amd64, Linux arm64/armv7/armv6,
   macOS amd64/arm64) into `<data dir>/bin/`: downloaded over HTTPS from the GitHub
