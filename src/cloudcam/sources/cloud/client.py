@@ -63,6 +63,13 @@ class MfaRequired(Exception):
     """Kalit olish uchun 2FA (email) kodi kerak bo'lganda ko'tariladi."""
 
 
+class SessionExpired(RuntimeError):
+    """Bulut refresh tokenni RAD ETDI — faqat shu holda parol bilan qayta kiriladi.
+
+    Tarmoq xatosi bu emas: u o'zicha ko'tariladi. Aks holda qisqa uzilish
+    to'liq loginga (CAPTCHA 1015 / yangi qurilma 2FA) olib kelardi."""
+
+
 class CloudClient:
     """EZVIZ / Hik-Connect bulutiga kirish va qurilmalar ro'yxati."""
 
@@ -94,6 +101,7 @@ class CloudClient:
         self.session_time = 0.0      # sessiya qachon olingan (epoch) — faylga ham yoziladi
         self._login_fail_at = 0.0    # oxirgi muvaffaqiyatsiz login
         self._login_backoff = 0.0    # keyingi urinishgacha kutish
+        self.token_path = None       # sessiya qaysi fayldan tiklangan / yozilgan
 
         self.session = requests.Session()
         self.session.headers.update(self._base_headers())
@@ -230,6 +238,15 @@ class CloudClient:
             safe_domain(tok.get("api_url") or self.api_url)
         except UnsafeDomain:
             return False
+        saved_user = (tok.get("username") or "").strip().lower()
+        if self.email and saved_user and saved_user != str(self.email).strip().lower():
+            # Boshqa hisobning sessiyasi: uni tiklasak boshqa hisob kameralari
+            # chiqadi, keyingi loginda esa eski email + yangi parol ketadi.
+            return False
+        saved_pf = tok.get("platform")
+        if self.email and saved_pf in self.PLATFORMS and saved_pf != self.platform:
+            return False                # platforma o'zgartirilgan -> yangi login
+        self.token_path = path
         self.session_id = tok["session_id"]
         self.rf_session_id = tok.get("rf_session_id")
         self.api_url = safe_domain(tok.get("api_url") or self.api_url)
@@ -267,8 +284,10 @@ class CloudClient:
                 self.refresh_session(allow_login=False)
                 self.save_token(path)
                 return "refreshed"
-            except Exception:
-                pass                 # refresh ishlamadi -> to'liq login
+            except SessionExpired:
+                pass                 # bulut rad etdi -> to'liq login
+            # Tarmoq xatosi o'zicha ko'tariladi: parol bilan kirish ham
+            # baribir o'tmasdi, faqat CAPTCHA xavfi qo'shilardi.
         self.login()
         self.save_token(path)
         return "login"
@@ -284,29 +303,34 @@ class CloudClient:
         24/7 ishlash uchun muhim. Muvaffaqiyatsiz bo'lsa to'liq qayta login
         qiladi (`allow_login=False` bo'lsa xato ko'taradi).
         """
+        # Tarmoq xatosi (requests.RequestException) shu yerdan o'zicha chiqadi.
+        r = self.session.put(
+            f"https://{self.api_url}/v3/apigateway/login",
+            data={
+                "refreshSessionId": self.rf_session_id,
+                "featureCode": self.FEATURE_CODE,
+            },
+            timeout=25,
+        )
         try:
-            r = self.session.put(
-                f"https://{self.api_url}/v3/apigateway/login",
-                data={
-                    "refreshSessionId": self.rf_session_id,
-                    "featureCode": self.FEATURE_CODE,
-                },
-                timeout=25,
-            )
             data = r.json()
-            if data.get("meta", {}).get("code") == 200:
-                info = data.get("sessionInfo", {})
-                self.session_id = info.get("sessionId", self.session_id)
-                self.rf_session_id = info.get("refreshSessionId", self.rf_session_id)
-                self.session.headers.update({"sessionId": self.session_id})
-                self.session_time = time.time()
-                return True
-        except Exception:
-            pass
-        # Refresh ishlamasa — to'liq qayta login
+        except ValueError:
+            data = {}
+        meta = data.get("meta", {}) if isinstance(data, dict) else {}
+        if meta.get("code") == 200:
+            info = data.get("sessionInfo", {})
+            self.session_id = info.get("sessionId", self.session_id)
+            self.rf_session_id = info.get("refreshSessionId", self.rf_session_id)
+            self.session.headers.update({"sessionId": self.session_id})
+            self.session_time = time.time()
+            return True
+        # Refresh rad etildi — to'liq qayta login
         if not allow_login:
-            raise RuntimeError(t("Could not refresh the session (refresh token expired)",
-                                 "Sessiyani yangilab bo'lmadi (refresh token eskirgan)"))
+            raise SessionExpired(t(
+                f"Could not refresh the session (refresh token expired, "
+                f"HTTP {r.status_code}, code {meta.get('code')})",
+                f"Sessiyani yangilab bo'lmadi (refresh token eskirgan, "
+                f"HTTP {r.status_code}, kod {meta.get('code')})"))
         self.login()
         return True
 
@@ -449,12 +473,35 @@ class CloudClient:
         raise RuntimeError(t(f"Could not get the verification code (meta.code {code})",
                              f"Tasdiqlash kodini ololmadim (meta.code {code})"))
 
+    def refresh_and_save(self, path=None) -> str:
+        """401 dan keyin: sessiyani yangilab DARHOL faylga yozadi (parolsiz).
+
+        Bir token faylini ko'r jarayon (ko'ruvchi, CLI, har kamera proxy'si)
+        bo'lishadi. Refresh tokeni aylanadi — yangilangan sessiya yozilmasa
+        fayldagi eski refresh token o'lik bo'lib qoladi va keyingi ishga
+        tushirish to'liq loginga tushardi. Avval faylni qayta o'qiymiz: boshqa
+        jarayon allaqachon yangilagan bo'lsa, uning sessiyasini olamiz."""
+        path = path or self.token_path or self._default_token_file()
+        try:
+            with open(path, encoding="utf-8") as f:
+                tok = json.load(f)
+            newer = (tok.get("session_id") and tok["session_id"] != self.session_id
+                     and float(tok.get("session_time") or 0) > (self.session_time or 0))
+        except (OSError, ValueError, TypeError):
+            newer = False
+        if newer and self.load_token(path):
+            return "adopted"
+        self.refresh_session(allow_login=False)
+        self.save_token(path)
+        return "refreshed"
+
     def save_token(self, path="ezviz_token.json"):
         """Sessiyani diskka yozadi — keyingi ishga tushirish login QILMAYDI.
 
         `feature_code` ham yoziladi: token boshqa kompyuterga ko'chirilsa
         [[load_token]] uni rad etadi (bulut baribir qabul qilmaydi).
         Fayl 0600 bilan atomar yoziladi ([[fsutil.write_private]])."""
+        self.token_path = path
         write_private(path, json.dumps({
             "session_id": self.session_id,
             "rf_session_id": self.rf_session_id,

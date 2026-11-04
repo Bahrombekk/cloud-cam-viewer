@@ -171,7 +171,7 @@ class CameraStream:
         # uzatiladi ([[Settings.to_env]]): ilgari faqat `token_file` ketardi
         # va bola-jarayon `platform` ni standart qiymatdan olib, noto'g'ri
         # `clientType` yuborardi.
-        env = dict(os.environ, **s.to_env())
+        env = s.child_env()
         # ABSOLUT yo'l: proxy cwd=loyiha ildizi (pip o'rnatilganda site-packages)
         # bilan ishlaydi, token esa joriy papkaga yozilgan — nisbiy yo'l boshqa
         # faylni qidirib proxy darhol yiqilardi.
@@ -470,7 +470,11 @@ class StreamManager:
         if not self.client:
             return
         self._running = True
-        max_age = interval
+        # Eski `interval=3600` chaqiruvlari sessiyani `connect()` "eskirgan"
+        # deb hisoblagan yoshdan (SESSION_MAX_AGE) ancha keyin yangilardi —
+        # o'rtadagi vaqtda proxy'lar 401 olib, o'zlari yangilashga urinardi.
+        limit = getattr(self.client, "SESSION_MAX_AGE", None)
+        max_age = interval if not (interval and limit) else min(interval, limit)
 
         def loop():
             while self._running:
@@ -480,8 +484,7 @@ class StreamManager:
                 try:
                     if not self.client.is_refresh_needed(max_age):
                         continue
-                    self.client.refresh_session()
-                    self.client.save_token(get_active().token_file)
+                    self._refresh_and_save(get_active().token_file)
                     print(f"[{time.strftime('%H:%M:%S')}] 🔄 "
                           + t("Token refreshed", "Token yangilandi"))
                 except Exception as e:
@@ -490,6 +493,21 @@ class StreamManager:
 
         self._token_thread = threading.Thread(target=loop, daemon=True)
         self._token_thread.start()
+
+    def _refresh_and_save(self, path):
+        """Avval parolsiz (boshqa jarayon yangilagan bo'lsa — o'shani olib),
+        bulut refresh tokenni rad etsagina parol bilan qayta kiradi."""
+        from cloudcam.sources.cloud.client import SessionExpired
+        again = getattr(self.client, "refresh_and_save", None)
+        if again is None:                       # eski/soxta mijoz
+            self.client.refresh_session()
+            self.client.save_token(path)
+            return
+        try:
+            again(path)
+        except SessionExpired:
+            self.client.login()
+            self.client.save_token(path)
 
     def stop_all(self):
         self._running = False

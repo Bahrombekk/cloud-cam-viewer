@@ -55,8 +55,22 @@ def test_manager_passes_the_whole_settings_object():
     """Manba matnini qo'riqlaymiz: faqat `token_file` uzatilsa, platforma
     yana standart qiymatga tushib qoladi."""
     text = MGR.read_text(encoding="utf-8")
-    assert re.search(r"dict\(os\.environ,\s*\*\*\s*\w+\.to_env\(\)\)", text), \
+    assert re.search(r"\w+\.child_env\(\)", text), \
         "bola-jarayonga TO'LIQ sozlama uzatilmayapti"
+
+
+def test_secrets_are_not_in_repr():
+    r = repr(Settings(email="a@b.c", password="maxfiy", isup_token="tok123"))
+    assert "maxfiy" not in r and "tok123" not in r and "a@b.c" in r
+
+
+def test_inherited_password_does_not_reach_the_child():
+    """README `CLOUDCAM_PASSWORD` ni tavsiya qiladi — u os.environ orqali
+    bola-jarayonga meros bo'lib o'tmasligi kerak."""
+    base = {"CLOUDCAM_PASSWORD": "maxfiy", "CLOUDCAM_ISUP_TOKEN": "t", "PATH": "x"}
+    env = Settings(platform="ezviz").child_env(base)
+    assert "CLOUDCAM_PASSWORD" not in env and "CLOUDCAM_ISUP_TOKEN" not in env
+    assert env["PATH"] == "x" and env["CLOUDCAM_PLATFORM"] == "ezviz"
 
 
 def test_new_settings_need_no_extra_wiring():

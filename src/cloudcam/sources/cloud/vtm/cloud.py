@@ -96,7 +96,13 @@ def fetch_vtdu_token(client: Any) -> JsonDict:
             timeout=HTTP_TIMEOUT,
         )
         if r.status_code == 401 and attempt < MAX_RETRIES:
-            client.refresh_session(allow_login=False)
+            # Yangilangan sessiya faylga ham yoziladi — aks holda aylangan
+            # refresh token yo'qolib, boshqa jarayonlar loginga tushardi.
+            again = getattr(client, "refresh_and_save", None)
+            if again is not None:
+                again()
+            else:
+                client.refresh_session(allow_login=False)
             continue
         if r.status_code >= 400:
             raise VtmError(f"Could not get VTDU token: HTTP {r.status_code}")

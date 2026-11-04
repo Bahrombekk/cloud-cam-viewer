@@ -15,7 +15,7 @@ va stream_manager global config o'rniga shuni o'qiydi).
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 ENV_PREFIX = "CLOUDCAM_"
 _MISSING = object()
@@ -43,7 +43,7 @@ def _coerce(type_name, raw: str):
 class Settings:
     platform: str = "hikconnect"          # "hikconnect" | "ezviz"
     email: str = ""
-    password: str = ""
+    password: str = field(default="", repr=False)   # repr/log'da ko'rinmaydi
     region: str | None = None             # None — login paytida aniqlanadi
     proxy_start_port: int = 8700          # har kameraga ketma-ket port
     display_width: int = 1280
@@ -68,7 +68,7 @@ class Settings:
     # manzili. Ko'prik bo'lmasa hech narsa buzilmaydi: bulut yo'li o'z
     # holicha ishlayveradi.
     isup_url: str = "http://127.0.0.1:8091"      # ko'prikning HTTP API'si
-    isup_token: str = ""                          # X-Bridge-Token (ixtiyoriy)
+    isup_token: str = field(default="", repr=False)  # X-Bridge-Token (ixtiyoriy)
     isup_rtsp_base: str = "rtsp://127.0.0.1:8554"  # ko'prik publish qiladigan MediaMTX
 
     # ── manbalar ──────────────────────────────────────────────────────
@@ -121,6 +121,18 @@ class Settings:
             out[f"{ENV_PREFIX}{f.name.upper()}"] = (
                 ("1" if v else "0") if isinstance(v, bool) else str(v))
         return out
+
+    def child_env(self, base=None) -> dict[str, str]:
+        """Bola-jarayon muhiti: `base` (standart — os.environ) + `to_env()`.
+
+        Foydalanuvchi o'zi `CLOUDCAM_PASSWORD` qo'ygan bo'lsa ham u bola-jarayonga
+        o'tmaydi — `to_env` uni tashlab ketishi yetarli emas, chunki u
+        `os.environ` dan meros bo'lib qolardi."""
+        env = dict(os.environ if base is None else base)
+        for name in _ENV_EXCLUDE:
+            env.pop(f"{ENV_PREFIX}{name.upper()}", None)
+        env.update(self.to_env())
+        return env
 
     @classmethod
     def resolve(cls) -> "Settings":
