@@ -123,6 +123,7 @@ class CameraStream:
         self._fps_time = time.time()
         # GPU (NVDEC) dekod — sozlamadan; ishlamasa avtomatik dasturiyga o'tadi
         self._use_gpu = get_active().use_gpu
+        self._gpu_empty = 0           # GPU bilan ketma-ket kadrsiz urinishlar
 
     def _wait_port(self, timeout=20):
         start = time.time()
@@ -205,7 +206,8 @@ class CameraStream:
 
     def _ffmpeg_cmd(self):
         url = self.url or f"http://127.0.0.1:{self.port}/{self.serial}.ts"
-        cmd = ["ffmpeg"]
+        # -nostdin: konsoldagi tugmalarni (masalan 'q') o'qib, o'zini to'xtatmasin.
+        cmd = ["ffmpeg", "-nostdin"]
         if self.url and self.url.startswith("rtsp://"):
             # RTSP: TCP majburan — UDP da paket yo'qolishi tasvirni buzadi,
             # va NAT/konteyner tarmog'ida UDP ko'pincha umuman o'tmaydi.
@@ -268,13 +270,15 @@ class CameraStream:
                 # 2. FFmpeg ishga tushirish
                 self.ffmpeg_proc = subprocess.Popen(
                     self._ffmpeg_cmd(),
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     bufsize=frame_size * 4,
                 )
                 self._ffmpeg_started = time.time()  # watchdog shu vaqtdan sanaydi
-
-                backoff = 1  # muvaffaqiyatli ulandi, backoff ni tiklash
+                # backoff bu yerda EMAS, birinchi kadrdan keyin tiklanadi: Popen
+                # doim muvaffaqiyatli, shuning uchun doimiy xatoda kamera har
+                # 1-2 s da qayta urinib, bulutga cheksiz so'rov yuborardi.
                 frames_this_attempt = 0
 
                 # 3. Frame o'qish
@@ -336,12 +340,18 @@ class CameraStream:
                     continue
                 self._offline_tries = 0
 
-                # GPU bilan 0 kadr olindi -> NVDEC ishlamayapti, dasturiyga o'tamiz
+                # GPU bilan ketma-ket 0 kadr -> NVDEC ishlamayapti, dasturiyga
+                # o'tamiz. Bitta bo'sh urinish (502, bulut qotishi) yetarli emas.
                 if frames_this_attempt == 0 and self._use_gpu:
-                    self._use_gpu = False
+                    self._gpu_empty += 1
+                    if self._gpu_empty >= 3:
+                        self._use_gpu = False
+                elif frames_this_attempt:
+                    self._gpu_empty = 0
 
                 # Bo'sh kanal (kamera ulanmagan) ni aniqlash: ketma-ket kadrsiz urinishlar
                 if frames_this_attempt > 0:
+                    backoff = 1
                     self._consec_empty = 0
                     if self.error and self._error_transient:
                         self.error = None  # kamera qaytib keldi
@@ -353,8 +363,17 @@ class CameraStream:
                                        "Signal yo'q (kamera ulanmagan?)")
                         self._error_transient = True
 
-            except Exception:
-                pass
+            except FileNotFoundError:
+                # ffmpeg PATH'da yo'q: avval jim yutilib, oynada abadiy
+                # "Connecting..." turardi.
+                self.error = t("ffmpeg not found - install it and add it to PATH",
+                               "ffmpeg topilmadi — o'rnating va PATH ga qo'shing")
+                self._error_transient = False
+                backoff = 30
+            except Exception as e:  # noqa: BLE001 — 24/7 sikl to'xtamasin
+                if not self.error:
+                    self.error = t(f"Stream error: {e}", f"Oqim xatosi: {e}")
+                    self._error_transient = True
             finally:
                 proc, self.ffmpeg_proc = self.ffmpeg_proc, None
                 _stop_proc(proc)
@@ -362,9 +381,10 @@ class CameraStream:
             # Uzildi — qayta ulanishdan oldin kutish
             if self.running:
                 self.connected = False
+                self.fps = 0.0
                 self.reconnect_count += 1
-                time.sleep(min(backoff, 10))
-                backoff = min(backoff * 2, 10)
+                time.sleep(min(backoff, 30))
+                backoff = min(backoff * 2, 30)
 
     def _watchdog_loop(self):
         """Qotgan oqimni aniqlaydi: ffmpeg ishlayapti-yu, FREEZE_TIMEOUT dan

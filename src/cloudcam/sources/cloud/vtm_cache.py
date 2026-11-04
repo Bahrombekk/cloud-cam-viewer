@@ -213,13 +213,23 @@ def vtdu(client: Any) -> dict:
 # ---- Keshni yangilash (o'chirmasdan) --------------------------------------
 
 PAGELIST_REFRESH_FLOOR = 30.0   # shundan yosh ro'yxat qayta so'ralmaydi
+REFRESH_FLOOR = 30.0            # [[refresh]]: shundan yosh metama'lumot so'ralmaydi
 
 
 def refresh(client: Any, kinds: tuple[str, ...] = ("pagelist", "vtdu")) -> bool:
     """Metama'lumotni BULUTDAN qayta oladi; kesh faqat muvaffaqiyatda almashadi.
 
     Oqim ochilmaganda keshni o'chirish (`invalidate`) o'rniga shu: VTDU tokeni
-    eskirgan bo'lsa yangisi yoziladi, bulut xato bersa eski kesh joyida qoladi."""
+    eskirgan bo'lsa yangisi yoziladi, bulut xato bersa eski kesh joyida qoladi.
+
+    [[REFRESH_FLOOR]] dan yosh metama'lumot qayta so'ralmaydi (fayl yoshi —
+    barcha jarayonlar uchun umumiy): doimiy xato beradigan kamera har 1-2 s da
+    qayta urinib, har safar bulutga 2-3 so'rov yuborardi."""
+    key = getattr(client, _KEY_ATTR, None)
+    if key:
+        ages = [age(key, k) for k in kinds]
+        if all(a is not None and a < REFRESH_FLOOR for a in ages):
+            return False
     try:
         with bypass_read():
             if "pagelist" in kinds:

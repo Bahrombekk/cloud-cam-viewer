@@ -251,22 +251,34 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             except Exception as e:
-                if "offline" in str(e).lower() or "unreachable" in str(e).lower():
+                # Paket kelgan bo'lsa oqim ISHLAB turgan edi: qisqa qotish (socket
+                # timeout ham "offline or unreachable" bo'lib keladi) — OFLAYN
+                # emas. Bayroq 15-60 s kutishga olib kelardi, oddiy qayta ulanish ~1 s.
+                offline = "offline" in str(e).lower() or "unreachable" in str(e).lower()
+                if offline and not got_packets:
                     _flag_offline()
-                elif not got_packets and not _is_missing_resource(e):
+                elif not offline and not got_packets and not _is_missing_resource(e):
                     # Bitta ham paket kelmadi -> keshdagi metama'lumot (VTDU
                     # tokeni) eskirgan bo'lishi mumkin. Paket kelgan bo'lsa
                     # kesh TO'G'RI edi — uzilish boshqa sababdan, tegmaymiz.
                     # O'chirmaymiz, YANGILAYMIZ ([[vtm_cache.refresh]]).
                     vtm_cache.refresh(client)
 
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.daemon_threads = True
+    server = _Server(("127.0.0.1", port), Handler)
     try:
         server.serve_forever()
     finally:
         server.server_close()
 
+
+
+class _Server(ThreadingHTTPServer):
+    """Windows'da SO_REUSEADDR ikkinchi soketga BAND portni ham bog'lashga
+    ruxsat beradi: eski/yetim proxy bilan yangisi bir portda tinglab, ffmpeg
+    boshqa kameraning oqimini olishi mumkin edi. POSIX'da u faqat TIME_WAIT
+    portni qayta ishlatishga ruxsat beradi — u yerda kerak."""
+    daemon_threads = True
+    allow_reuse_address = os.name != "nt"
 
 
 def resolve_key(arg: str) -> str:

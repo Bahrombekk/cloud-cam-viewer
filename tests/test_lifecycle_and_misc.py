@@ -5,6 +5,7 @@ import itertools
 import subprocess
 import sys
 import types
+from pathlib import Path
 
 from Crypto.Cipher import AES
 
@@ -174,3 +175,36 @@ def test_clear_sei_does_not_outvote_encrypted_slices():
     for i in range(4, 8):
         dec.feed(_rtp(b"\x02\x01" + _enc(_body(0xAF, i))))
     assert dec._inter_enc is True, dec.inter_note
+
+
+def test_ffmpeg_does_not_read_the_console():
+    """N ta ffmpeg konsol tugmalarini o'qimasin ('q' ffmpeg'ni to'xtatadi)."""
+    from cloudcam import stream_manager as sm
+    text = Path(sm.__file__).read_text(encoding="utf-8")
+    assert '"-nostdin"' in text and "stdin=subprocess.DEVNULL" in text
+
+
+def test_missing_ffmpeg_is_reported_not_swallowed():
+    from cloudcam import stream_manager as sm
+    text = Path(sm.__file__).read_text(encoding="utf-8")
+    assert "except FileNotFoundError" in text
+
+
+def test_proxy_port_is_not_shared_on_windows():
+    """Windows'da SO_REUSEADDR band portga ikkinchi bog'lanishga ruxsat beradi."""
+    import os
+
+    import pytest
+
+    from cloudcam.sources.cloud.proxy import _Server
+    assert _Server.allow_reuse_address == (os.name != "nt")
+    if os.name != "nt":
+        return
+    from http.server import BaseHTTPRequestHandler
+    a = _Server(("127.0.0.1", 0), BaseHTTPRequestHandler)
+    try:
+        port = a.server_address[1]
+        with pytest.raises(OSError):
+            _Server(("127.0.0.1", port), BaseHTTPRequestHandler).server_close()
+    finally:
+        a.server_close()

@@ -248,3 +248,17 @@ def test_cloudcam_starts_and_stops_warmer(monkeypatch, tmp_path):
     monkeypatch.setattr(off.client, "connect", lambda tf: "resumed")
     off.login()
     assert len(started) == 2                      # faqat oldingi stop qo'shilgan
+
+
+def test_refresh_is_throttled_across_retries(fake_cloud, tmp_path, monkeypatch):
+    """Doimiy xatoda kamera har 1-2 s da qayta urinadi — har safar bulutga
+    pagelist + VTDU so'rovi ketmasin (150 kamerada bu doimiy toshqin)."""
+    vc, state = fake_cloud
+    state["pagelist"] = {"A": {"res": ["cam1"]}}
+    a = _client("A", tmp_path)
+    assert vtm_cache.refresh(a) is True
+    state["pagelist"] = {"A": {"res": ["cam1", "cam2"]}}
+    assert vtm_cache.refresh(a) is False                   # hali juda yangi
+    assert vtm_cache.load("A", "pagelist") == {"res": ["cam1"]}
+    monkeypatch.setattr(vtm_cache, "age", lambda k, kind: vtm_cache.REFRESH_FLOOR + 1)
+    assert vtm_cache.refresh(a) is True
