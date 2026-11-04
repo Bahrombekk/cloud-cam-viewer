@@ -8,7 +8,14 @@ minor versions; such changes are always listed here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
 ### Added
+- **`isup-bridge/`**: the C++ ISUP 5.0 bridge that `IsupBridge` / `cloudcam isup` talk to,
+  with a Dockerfile, a compose file that also starts MediaMTX, and documentation (SDK
+  setup, device configuration, control API, log lines). Experimental: verified with one
+  device model. The Hikvision ISUP SDK is not included and is git-ignored, because it
+  may not be redistributed.
 - `cloudcam code check SERIAL [CODE] [--channel N|all]` verifies a verification code on
   the live stream and saves it if correct; `cloudcam code set` stores codes as typed.
   `check` needs only the saved session, not the password. The logic moved from
@@ -30,8 +37,8 @@ minor versions; such changes are always listed here.
 - English is now the default language for every user-facing message (CLI, viewer
   overlay, helper scripts). Set `CLOUDCAM_LANG=uz` for Uzbek.
 - GitHub Actions CI: `ruff` + `pytest` on Linux and Windows, Python 3.10 and 3.13.
-- Release workflow: pushing a `v*` tag builds sdist/wheel and publishes a GitHub
-  Release with the matching section of this changelog.
+- Release workflow: pushing a `v*` tag runs `ruff` and `pytest`, builds sdist/wheel and
+  publishes a GitHub Release with the matching section of this changelog.
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue and pull-request templates.
 
 ### Changed
@@ -181,5 +188,6 @@ First tagged version. Summarises everything since the initial commit.
   `0600` permissions; the verification code reaches child processes through the
   environment, never the command line.
 
-[Unreleased]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Bahrombekk/cloud-cam-viewer/releases/tag/v0.2.0

@@ -140,6 +140,7 @@ cloud-cam-viewer/
 │           ├── push.py        #     MQTT push events
 │           └── vtm/           #     stream transport, adapted from pyezvizapi (Apache-2.0)
 ├── scripts/                   # thin wrappers: app.py (pick + grid), single.py, check/set_code.py
+├── isup-bridge/               # C++ ISUP 5.0 -> RTSP bridge (needs Hikvision's SDK, not included)
 ├── tests/                     # pytest (cloud is faked — no account needed)
 ├── docs/                      # this file, roadmap.md (internal analysis)
 ├── config.example.py          # settings template (copy to config.py)

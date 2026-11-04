@@ -442,7 +442,7 @@ def main(argv=None) -> int:
     isub.add_parser("devices", help=t("connected devices and streams",
                                        "ulangan qurilmalar va oqimlar"))
     ik = isub.add_parser("keys", help=t("send device keys", "qurilma kalitlarini yuborish"))
-    ik.add_argument("pair", nargs="+", metavar="DeviceID=KALIT")
+    ik.add_argument("pair", nargs="+", metavar="DEVICE_ID=KEY")
     ik.add_argument("--no-default", action="store_true",
                     help=t("do not fall back to ISUP_KEY (recommended)",
                            "zaxira ISUP_KEY ishlatilmasin (tavsiya etiladi)"))

@@ -1,0 +1,33 @@
+# isup-bridge + MediaMTX for a single host.
+#
+#   cp .env.example .env     # set PUBLIC_IP and ISUP_KEY
+#   docker compose up -d --build
+#
+# Devices reach 17660 (tcp+udp) and 17661 (tcp) from outside. The control API and the
+# RTSP server are bound to 127.0.0.1, which is what cloudcam expects by default
+# (isup_url = http://127.0.0.1:8091, isup_rtsp_base = rtsp://127.0.0.1:8554).
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.9.3
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8554:8554"
+
+  isup-bridge:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RTSP_BASE: rtsp://mediamtx:8554
+      CMS_PORT: "17660"
+      STREAM_PORT: "17661"
+      API_PORT: "8091"
+    ports:
+      - "17660:17660/tcp"
+      - "17660:17660/udp"
+      - "17661:17661/tcp"
+      - "127.0.0.1:8091:8091"
+    volumes:
+      - ./logs:/opt/isup/logs
+    depends_on:
+      - mediamtx

@@ -1,7 +1,6 @@
 # Roadmap and engineering backlog
 
-Status as of 2026-11-04. Released: **0.2.0**. Everything under `[Unreleased]` in
-[CHANGELOG.md](../CHANGELOG.md) is planned for **0.3.0**.
+Status as of 2026-11-04. Latest release: **0.3.0** (see [CHANGELOG.md](../CHANGELOG.md)).
 
 This document is the working plan behind the short roadmap in the
 [README](../README.md#roadmap). Each open item states the problem, where it lives and
@@ -24,12 +23,9 @@ operability, **P2** hardening and polish.
 
 ## 1. Release 0.3.0
 
-- [ ] Verify the unreleased changes on live cameras: proxy `Host` check with ffmpeg,
-  grid viewer tile sizing, `cloudcam code check`, legacy-file migration to the data
-  directory.
-- [ ] Release workflow runs `ruff` and `pytest` before building
-  (`.github/workflows/release.yml` currently builds without testing).
-- [ ] Bump `cloudcam.__version__`, date the changelog section, tag `v0.3.0`.
+- [x] Live check on the account's cameras (grid viewer, proxy `Host` check).
+- [x] Release workflow runs `ruff` and `pytest` before building.
+- [x] Version 0.3.0, changelog dated, tag `v0.3.0`.
 
 ## 2. Reliability (P0)
 
@@ -156,14 +152,16 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
 - [ ] **0.5 — benchmarks.** Reproducible first-frame p50/p95, recovery after network
   loss, CPU per camera (builds on §3 and §6).
 - [ ] **PyPI** release (`pip install cloudcam`).
-- [ ] **ISUP:** document building and deploying the bridge; detect channels when a
-  device connects; an always-warm list of cameras kept open 24/7.
+- [x] **ISUP bridge published** in `isup-bridge/` with build and deployment docs.
+- [ ] **ISUP:** use the NVR channel list the bridge already reports (`ip_channels`)
+  in `CloudCam.isup_cameras()`; an always-warm list of cameras kept open 24/7; a CI
+  job that at least compiles the bridge against stub headers.
 
 ## 10. Done
 
 Kept so that solved problems are not reopened. Details are in the changelog.
 
-**0.3.0 (unreleased)**
+**0.3.0 (2026-11-04)**
 - Vendored stream transport from pyezvizapi 1.0.5.0 (`sources/cloud/vtm/`); no
   dependency on pyezvizapi internals, no monkeypatching, substream as a parameter.
 - Layered package (`core` < `codec` < `media` < `sources` < app), enforced by
@@ -180,6 +178,8 @@ Kept so that solved problems are not reopened. Details are in the changelog.
   relative paths in `config.py` resolve next to it.
 - `cloudcam code check|set`; scripts are thin wrappers; one grid implementation,
   sized to the window.
+- `isup-bridge/`: the ISUP 5.0 bridge published with build and deployment docs
+  (SDK not included).
 - Session refresh distinguishes a rejected refresh token (`SessionExpired`) from a
   network error, so a network blip no longer triggers a full login.
 
