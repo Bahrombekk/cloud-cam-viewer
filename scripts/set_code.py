@@ -14,8 +14,9 @@ import sys
 import os as _os  # noqa: E402
 import sys as _sys  # noqa: E402
 
-# config.py loyiha ildizida: `python scripts/<nom>.py` ildizdan ishga tushiriladi.
-_sys.path.insert(0, _os.getcwd())
+# config.py: joriy papkada yoki loyiha ildizida (scripts/ ichidan ham ishlaydi).
+_sys.path[:0] = [_os.getcwd(),
+                 _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))]
 
 import config
 
