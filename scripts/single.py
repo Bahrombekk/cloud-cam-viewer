@@ -1,75 +1,26 @@
+"""View one camera with automatic reconnect.
+
+    python scripts/single.py <SERIAL> [CHANNEL]
 """
-Bitta kamerani 24/7 uzilishsiz ko'rish.
-
-Stream uzilsa avtomatik qayta ulanadi, token avtomatik yangilanadi.
-
-Ishga tushirish:
-    python scripts/single.py AB5678901
-    python scripts/single.py AB5678901 --decrypt
-"""
-
 import sys
 
-import os as _os  # noqa: E402
-import sys as _sys  # noqa: E402
+import _bootstrap  # noqa: F401  (sys.path, stdout)
 
-# config.py: joriy papkada yoki loyiha ildizida (scripts/ ichidan ham ishlaydi).
-_sys.path[:0] = [_os.getcwd(),
-                 _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))]
-
-import config
-
-# token.json / cam_keys.json config.py yonida turadi — qayerdan ishga tushirilsa ham.
-if getattr(config, "__file__", None):
-    _os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
-import cv2
-
-from cloudcam.sources.cloud.client import CloudClient
-from cloudcam.i18n import t
-from cloudcam.stream_manager import StreamManager, load_cam_keys
+from cloudcam import Camera, CloudCam
 
 
-def main():
+def main() -> int:
     if len(sys.argv) < 2:
-        print(t("Usage", "Foydalanish") + ": python scripts/single.py <SERIAL> [--decrypt]")
-        return
+        print(__doc__.strip())
+        return 1
+    from cloudcam import viewer
+
     serial = sys.argv[1]
-    decrypt = "--decrypt" in sys.argv
-
-    print("🔐 " + t("Preparing session...", "Sessiya tayyorlanmoqda..."))
-    client = CloudClient(config.EMAIL, config.PASSWORD, config.REGION,
-                         platform=getattr(config, "PLATFORM", "hikconnect"))
-    # Saqlangan sessiya bo'lsa qayta login QILMAYMIZ ([[CloudClient.connect]])
-    mode = client.connect(config.TOKEN_FILE)
-    print(f"✅ {t('Ready', 'Tayyor')} ({mode})\n")
-
-    manager = StreamManager(client=client)
-    manager.start_token_refresh(interval=3600)
-    # `add()` qaytargan oqimni SAQLAYMIZ: `manager.streams` kaliti
-    # (serial, channel) juftligi, ya'ni `streams[serial]` KeyError beradi.
-    stream = manager.add(serial, channel=1, decrypt=decrypt, width=1280, height=720,
-                         key=load_cam_keys().get(serial) or "AUTO")
-
-    print("🎥 " + t("Opening stream... (quit: 'q')", "Stream ochilmoqda... (chiqish: 'q')"))
-    window = f"EZVIZ: {serial}"
-
-    try:
-        while True:
-            frame = stream.get_frame()
-            if frame is not None:
-                st = stream.status()
-                color = (0, 255, 0) if st["connected"] else (0, 0, 255)
-                cv2.rectangle(frame, (0, 0), (frame.shape[1], 30), (0, 0, 0), -1)
-                cv2.putText(frame, f"{serial}  {st['fps']}fps  "
-                                   f"reconnects:{st['reconnects']}",
-                            (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-                cv2.imshow(window, frame)
-            if cv2.waitKey(30) & 0xFF == ord("q"):
-                break
-    finally:
-        manager.stop_all()
-        cv2.destroyAllWindows()
+    channel = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    cam = CloudCam()
+    cam.login()
+    return viewer.run(cam, cameras=[Camera(serial, channel, serial)])
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

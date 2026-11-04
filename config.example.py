@@ -32,9 +32,13 @@ USE_GPU          = True     # NVIDIA NVDEC; ishlamasa avtomatik dasturiy dekodga
 STREAM_MODE      = "main"
 SUBSTREAM        = False    # eski bayroq; STREAM_MODE="sub" bilan bir xil
 
-# === FAYLLAR ===
-TOKEN_FILE  = "token.json"   # sessiya shu yerda saqlanadi -> qayta login qilinmaydi
-CAMKEY_FILE = "cam_keys.json"
+# === FAYLLAR (ixtiyoriy) ===
+# Standart joy — foydalanuvchi papkasi: Windows %APPDATA%\cloudcam,
+# macOS ~/Library/Application Support/cloudcam, Linux ~/.config/cloudcam
+# (yoki CLOUDCAM_HOME). Sessiya, kodlar va terminal kodi shu yerda turadi.
+# Boshqa joy kerak bo'lsa oching; nisbiy yo'l SHU config.py yoniga bog'lanadi.
+# TOKEN_FILE  = "token.json"   # sessiya -> qayta login qilinmaydi
+# CAMKEY_FILE = "cam_keys.json"
 
 # Terminal kodi (featureCode) avtomatik hisoblanadi va `feature_code.txt` ga
 # yoziladi — sozlash shart emas. Faqat bir nechta mustaqil nusxa bitta

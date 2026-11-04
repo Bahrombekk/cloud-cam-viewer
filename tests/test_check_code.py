@@ -1,10 +1,11 @@
-"""check_code.py — RTP oqimda codec'ga mos dekoder tanlanadi.
+"""Kodni jonli oqimda tekshirish (`cloudcam code check`).
+
+RTP oqimda codec'ga mos dekoder tanlanadi.
 
 Avval har qanday RTP oqim HEVC dekoderiga berilardi: H.264 kamerada to'g'ri
 kod ham "timeout"/"wrong" chiqardi.
 """
 import itertools
-import sys
 import types
 
 from Crypto.Cipher import AES
@@ -14,17 +15,8 @@ PROFILE_HIGH = 100
 
 
 def _import_check_code():
-    sys.modules.setdefault("config", types.ModuleType("config"))
-    if "check_code" in sys.modules:
-        return sys.modules["check_code"]
-    import importlib.util
-    from pathlib import Path
-    path = Path(__file__).resolve().parents[1] / "scripts" / "check_code.py"
-    spec = importlib.util.spec_from_file_location("check_code", path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["check_code"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    from cloudcam.sources.cloud import codecheck
+    return codecheck
 
 
 _seq = itertools.count()

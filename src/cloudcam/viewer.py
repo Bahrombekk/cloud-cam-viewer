@@ -1,6 +1,7 @@
 """OpenCV grid ko'ruvchi — yuqori darajali API ustida (ixtiyoriy `viewer` deps).
 
-Yadro (cloudcam) buni import qilmaydi; faqat `cloudcam view` chaqirsa yuklanadi.
+Yadro (cloudcam) buni import qilmaydi; faqat `cloudcam view` yoki
+`scripts/app.py` chaqirsa yuklanadi.
 Boshqaruv: q=chiqish · g=grid · 1-9=to'liq ekran · s=holat.
 """
 from __future__ import annotations
@@ -12,53 +13,89 @@ import cv2
 import numpy as np
 
 from cloudcam.i18n import t
-from cloudcam.settings import get_active
+
+WINDOW = "cloudcam"
+DEFAULT_WINDOW = (1280, 720)
+FULL_SIZE = (1280, 720)
 
 
-def _grid(frames, labels, statuses):
+def _window_size(win: str) -> tuple[int, int]:
+    """Oynaning joriy ichki o'lchami (foydalanuvchi o'zgartirgan bo'lishi mumkin)."""
+    try:
+        _x, _y, w, h = cv2.getWindowImageRect(win)
+        if w > 0 and h > 0:
+            return w, h
+    except cv2.error:
+        pass
+    return DEFAULT_WINDOW
+
+
+def _label(cell, text: str, color, *, right: str | None = None) -> None:
+    w = cell.shape[1]
+    scale = 0.5 if w >= 400 else 0.4
+    cv2.rectangle(cell, (0, 0), (w, 24), (0, 0, 0), -1)
+    cv2.putText(cell, text, (6, 17), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+    if right:
+        (tw, _), _ = cv2.getTextSize(right, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+        cv2.putText(cell, right, (w - tw - 6, 17), cv2.FONT_HERSHEY_SIMPLEX, scale,
+                    color, 1, cv2.LINE_AA)
+
+
+def _placeholder(size: tuple[int, int], status: dict):
+    w, h = size
+    cell = np.zeros((h, w, 3), dtype=np.uint8)
+    err = status.get("error")
+    msg, color = (err, (0, 0, 255)) if err else (t("Connecting...", "Ulanmoqda..."),
+                                                 (0, 200, 255))
+    cv2.putText(cell, msg[: max(10, w // 9)], (8, h // 2), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, color, 1, cv2.LINE_AA)
+    return cell
+
+
+def make_grid(frames, labels, statuses, size: tuple[int, int] = DEFAULT_WINDOW):
+    """Kadrlarni `size` (oyna) ichiga sig'adigan grid'ga yig'adi.
+
+    Ilgari har plitka to'liq `display_width x display_height` (1280x720)
+    o'lchamda chizilardi: 23 kamerada ~6400x3600 kadr har 30 ms da yig'ilib,
+    keyin oyna 4 barobar kichraytirardi — yozuvlar o'qib bo'lmas, CPU bekorga
+    ketardi. Endi plitka o'lchami oynadan hisoblanadi."""
     n = len(frames)
     if n == 0:
         return None
     cols = math.ceil(math.sqrt(n))
     rows = math.ceil(n / cols)
-    s = get_active()
-    h, w = s.display_height, s.display_width
-    blank = np.zeros((h, w, 3), dtype=np.uint8)
-
+    tw, th = max(1, size[0] // cols), max(1, size[1] // rows)
+    blank = np.zeros((th, tw, 3), dtype=np.uint8)
     cells = []
     for i in range(rows * cols):
-        cell = frames[i] if (i < n and frames[i] is not None) else blank.copy()
-        if i < n and frames[i] is None:
-            err = statuses[i].get("error")
-            if err:
-                msg, color = err, (0, 0, 255)
-            else:
-                msg, color = t("Connecting...", "Ulanmoqda..."), (0, 200, 255)
-            cv2.putText(cell, msg[:40], (10, h // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
-        if i < n:
-            st = statuses[i]
-            color = (0, 255, 0) if st["connected"] else (0, 0, 255)
-            cv2.rectangle(cell, (0, 0), (w, 28), (0, 0, 0), -1)
-            cv2.putText(cell, f"[{i+1}] {labels[i]}", (8, 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-            cv2.putText(cell, f"{st['fps']}fps", (w - 70, 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        if i >= n:
+            cells.append(blank)
+            continue
+        st = statuses[i]
+        f = frames[i]
+        cell = (cv2.resize(f, (tw, th), interpolation=cv2.INTER_AREA) if f is not None
+                else _placeholder((tw, th), st))
+        color = (0, 255, 0) if st["connected"] else (0, 0, 255)
+        _label(cell, f"[{i + 1}] {labels[i]}", color, right=f"{st['fps']}fps")
         cells.append(cell)
-
-    grid_rows = []
-    for r in range(rows):
-        row = cells[r * cols:(r + 1) * cols]
-        while len(row) < cols:
-            row.append(blank.copy())
-        grid_rows.append(np.hstack(row))
-    return np.vstack(grid_rows)
+    return np.vstack([np.hstack(cells[r * cols:(r + 1) * cols]) for r in range(rows)])
 
 
-def run(cam, args=None) -> int:
-    """Barcha kameralarni grid'da ko'rsatadi. `cam` — login qilingan CloudCam."""
+def _fullscreen(frame, label: str, st: dict):
+    w, h = FULL_SIZE
+    big = (cv2.resize(frame, (w, h)) if frame is not None else _placeholder((w, h), st))
+    color = (0, 255, 0) if st["connected"] else (0, 0, 255)
+    _label(big, f"{label}   reconnects: {st['reconnects']}   (g = grid)", color,
+           right=f"{st['fps']}fps")
+    return big
+
+
+def run(cam, args=None, *, cameras=None) -> int:
+    """Kameralarni grid'da ko'rsatadi. `cam` — login qilingan CloudCam.
+
+    `cameras` — ko'rsatiladigan [[cloudcam.api.Camera]] ro'yxati (standart: hammasi)."""
     cam.start_token_refresh(interval=3600)
-    cams = cam.cameras()
+    cams = list(cameras) if cameras is not None else cam.cameras()
     if not cams:
         print(t("No cameras found.", "Kamera topilmadi."))
         return 1
@@ -67,34 +104,26 @@ def run(cam, args=None) -> int:
     print(t(f"{len(streams)} cameras · q=quit · g=grid · 1-9=fullscreen · s=status",
             f"{len(streams)} kamera · q=chiqish · g=grid · 1-9=to'liq · s=holat"))
 
-    win = "cloudcam"
-    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(win, 1280, 720)
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW, *DEFAULT_WINDOW)
     full, show_status = None, False
     try:
         while True:
             statuses = [s.status() for s in streams]
             if full is not None and full < len(streams):
-                frame = streams[full].frame()
-                big = (cv2.resize(frame, (1280, 720)) if frame is not None
-                       else np.zeros((720, 1280, 3), dtype=np.uint8))
-                st = statuses[full]
-                color = (0, 255, 0) if st["connected"] else (0, 0, 255)
-                cv2.rectangle(big, (0, 0), (1280, 35), (0, 0, 0), -1)
-                cv2.putText(big, f"[{full+1}] {labels[full]}  {st['fps']}fps  "
-                                 f"reconnects:{st['reconnects']}  (g=grid)",
-                            (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                cv2.imshow(win, big)
+                cv2.imshow(WINDOW, _fullscreen(streams[full].frame(),
+                                               f"[{full + 1}] {labels[full]}", statuses[full]))
             else:
-                grid = _grid([s.frame() for s in streams], labels, statuses)
+                grid = make_grid([s.frame() for s in streams], labels, statuses,
+                                 _window_size(WINDOW))
                 if grid is not None:
-                    cv2.imshow(win, grid)
+                    cv2.imshow(WINDOW, grid)
             if show_status:
                 online = sum(1 for s in statuses if s["connected"])
                 print(f"\r[{time.strftime('%H:%M:%S')}] online: {online}/{len(streams)}  ",
                       end="", flush=True)
             k = cv2.waitKey(30) & 0xFF
-            if k == ord("q"):
+            if k == ord("q") or cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
                 break
             elif k == ord("g"):
                 full = None

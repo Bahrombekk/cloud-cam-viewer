@@ -1,268 +1,71 @@
-"""
-EZVIZ Multi-Camera Viewer — 24/7 uzilishsiz ishlash uchun.
+"""Multi-camera grid viewer with camera selection.
 
-Imkoniyatlar:
-  - Tanlangan kameralarni jonli ko'rish (grid yoki to'liq ekran)
-  - 24/7 uzilishsiz — har qanday uzilishda avtomatik qayta ulanadi
-  - Token avtomatik yangilanadi — hech qachon qayta MFA/parol so'ramaydi
-  - Har kamera holati ko'rinadi (FPS, qayta ulanishlar soni)
+Same viewer as `cloudcam view`, but first lists the cameras with their live
+state and lets you pick which ones to open:
 
-Ishga tushirish:
     python scripts/app.py
 
-Klaviatura (video oynasida):
-    q   - chiqish
-    1-9 - shu raqamli kamerani to'liq ekran
-    g   - grid ko'rinish
-    s   - holat (status) ko'rsatish/yashirish
+Selection: comma-separated numbers (1,3,5), `all`, or `live` (only the cameras
+that are streaming). Keys in the window: q quit, g grid, 1-9 fullscreen, s status.
 """
+import _bootstrap  # noqa: F401  (sys.path, stdout)
 
-import math
-import time
-
-import os as _os  # noqa: E402
-import sys as _sys  # noqa: E402
-
-# config.py: joriy papkada yoki loyiha ildizida (scripts/ ichidan ham ishlaydi).
-_sys.path[:0] = [_os.getcwd(),
-                 _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))]
-
-import config
-
-# token.json / cam_keys.json config.py yonida turadi — qayerdan ishga tushirilsa ham.
-if getattr(config, "__file__", None):      # testlarda config — stub modul
-    _os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
-import cv2
-import numpy as np
-
-from cloudcam.sources.cloud import devices, rest, vtm_cache
-from cloudcam.sources.cloud.stream import classify, probe_many
-from cloudcam.sources.cloud.client import CloudClient
+from cloudcam import CloudCam
 from cloudcam.i18n import t
-from cloudcam.stream_manager import StreamManager, load_cam_keys
+
+LABELS = {"ok": "live", "nokey": "NO CODE", "offline": "offline", "unknown": "?"}
 
 
-# Ro'yxatdagi belgi = kanalning HAQIQIY holati ([[check_cameras]]).
-ICONS = {"ok": "🟢", "nokey": "🔒", "offline": "⚫", "unknown": "❔"}
-
-
-def check_cameras(client, items):
-    """{(serial, ch): "ok" | "nokey" | "offline" | "unknown"}.
-
-    Ilgari hamma qator 🟢 edi: qurilma holati NVR darajasida, ya'ni NVR onlayn
-    bo'lsa undagi bo'sh portlar ham "yashil" ko'rinardi. Endi har kanal bulutdan
-    tez so'raladi ([[stream.probe_many]]); shifrlangan qurilmaning kodi yo'q
-    bo'lsa 🔒 — ochilganda baribir "kod yo'q" xatosi chiqardi."""
-    vtm_cache.tag(client, config.TOKEN_FILE)   # pagelist/VTDU hisob keshidan
-    live = probe_many(client, [(s, ch) for s, ch, _ in items])
-    try:
-        enc = {s for s, st in rest.device_status(client, {s for s, _, _ in items}).items()
-               if st.encrypted}
-    except Exception:
-        enc = None                        # noma'lum -> onlayn kanallar ❔
-    return classify(live, enc, load_cam_keys())
-
-
-def choose_cameras(items, states=None):
-    """items: [(serial, channel, name)] — faqat kamera ulangan kanallar.
-    `states` — [[check_cameras]] natijasi (None bo'lsa belgi ko'rsatilmaydi)."""
+def choose_cameras(cams, states=None):
+    """`cams` — [[cloudcam.api.Camera]]; `states` — `CloudCam.check()` natijasi."""
     states = states or {}
-    print("\n" + "=" * 60)
-    print("📷 " + t("CAMERAS", "KAMERALAR RO'YXATI"))
-    print("=" * 60)
-    for i, (serial, ch, name) in enumerate(items, 1):
-        icon = ICONS.get(states.get((serial, ch)), "  ")
-        print(f"  [{i:2}] {icon} {name}  ({serial} ch{ch})")
-    if not items:
+    print()
+    for i, c in enumerate(cams, 1):
+        st = LABELS.get(states.get((c.serial, c.channel)), "")
+        print(f"  [{i:2}] {st:<8} {c.name}  ({c.serial} ch{c.channel})")
+    if not cams:
         print(t("  (no cameras found)", "  (kamera topilmadi)"))
-    print("=" * 60)
+        return []
     if states:
-        n = {k: sum(v == k for v in states.values()) for k in ICONS}
-        extra_en = f"   ❔ unknown {n['unknown']}" if n["unknown"] else ""
-        extra_uz = f"   ❔ noma'lum {n['unknown']}" if n["unknown"] else ""
-        print(t(f"🟢 live {n['ok']}   🔒 no code {n['nokey']}   ⚫ offline {n['offline']}"
-                + extra_en,
-                f"🟢 ishlaydi {n['ok']}   🔒 kod yo'q {n['nokey']}   ⚫ oflayn {n['offline']}"
-                + extra_uz))
-        print(t("'live' = only the 🟢 cameras", "'live' — faqat 🟢 kameralar"))
-    print(t("Select: comma-separated numbers (e.g. 1,3,5) or 'all'",
-            "Tanlash: raqamlarni vergul bilan (masalan: 1,3,5) yoki 'all'"))
-    raw = input("➤ " + t("Choice: ", "Tanlov: ")).strip().lower()
-
+        n = {k: sum(v == k for v in states.values()) for k in LABELS}
+        print(t(f"\nlive {n['ok']}, no code {n['nokey']}, offline {n['offline']}, "
+                f"unknown {n['unknown']}",
+                f"\nishlaydi {n['ok']}, kod yo'q {n['nokey']}, oflayn {n['offline']}, "
+                f"noma'lum {n['unknown']}"))
+    raw = input(t("Select (e.g. 1,3,5 | all | live): ",
+                  "Tanlang (masalan 1,3,5 | all | live): ")).strip().lower()
     if raw == "all":
-        return items
+        return list(cams)
     if raw == "live":
-        return [it for it in items if states.get((it[0], it[1])) == "ok"]
-    chosen = []
+        return [c for c in cams if states.get((c.serial, c.channel)) == "ok"]
+    picked = []
     for part in raw.replace(" ", "").split(","):
-        if part.isdigit():
-            idx = int(part) - 1
-            if 0 <= idx < len(items):
-                chosen.append(items[idx])
-    return chosen
+        if part.isdigit() and 0 < int(part) <= len(cams):
+            picked.append(cams[int(part) - 1])
+    return picked
 
 
-def make_grid(frames, labels, statuses, cols=None):
-    n = len(frames)
-    if n == 0:
-        return None
-    if cols is None:
-        cols = math.ceil(math.sqrt(n))
-    rows = math.ceil(n / cols)
+def main() -> int:
+    from cloudcam import viewer
 
-    h, w = config.DISPLAY_HEIGHT, config.DISPLAY_WIDTH
-    blank = np.zeros((h, w, 3), dtype=np.uint8)
-
-    cells = []
-    for i in range(rows * cols):
-        if i < n and frames[i] is not None:
-            cell = frames[i]
-        else:
-            cell = blank.copy()
-            err = statuses[i].get("error") if i < n else None
-            if err:
-                cv2.putText(cell, t("ERROR!", "XATO!"), (w // 2 - 50, h // 2 - 15),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-                cv2.putText(cell, err, (10, h // 2 + 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1)
-            elif i < n:
-                cv2.putText(cell, t("Connecting...", "Ulanmoqda..."), (w // 2 - 80, h // 2),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
-
-        if i < n:
-            st = statuses[i]
-            color = (0, 255, 0) if st["connected"] else (0, 0, 255)
-            cv2.rectangle(cell, (0, 0), (w, 28), (0, 0, 0), -1)
-            cv2.putText(cell, f"[{i+1}] {labels[i]}", (8, 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-            cv2.putText(cell, f"{st['fps']}fps", (w - 70, 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-        cells.append(cell)
-
-    grid_rows = []
-    for r in range(rows):
-        row_cells = cells[r * cols:(r + 1) * cols]
-        while len(row_cells) < cols:
-            row_cells.append(blank.copy())
-        grid_rows.append(np.hstack(row_cells))
-    return np.vstack(grid_rows)
-
-
-def main():
-    print("🔐 " + t("Preparing session...", "Sessiya tayyorlanmoqda..."))
-    client = CloudClient(config.EMAIL, config.PASSWORD, config.REGION,
-                         platform=getattr(config, "PLATFORM", "hikconnect"))
-    # Saqlangan sessiya bo'lsa qayta login QILMAYMIZ — har safar login qilish
-    # bulutda CAPTCHA va "yangi qurilma" 2FA sini keltirib chiqaradi
-    # ([[CloudClient.connect]]).
-    mode = client.connect(config.TOKEN_FILE)
-    done = {"resumed": t("Reused saved session", "Saqlangan sessiya ishlatildi"),
-            "refreshed": t("Session refreshed", "Sessiya yangilandi"),
-            "login": t("Logged in", "Login muvaffaqiyatli!")}
-    print("✅ " + done.get(mode, t("Ready", "Tayyor")))
-
-    # Faqat haqiqiy kamera ulangan kanallarni ko'rsatamiz (bo'sh NVR slotlari emas)
-    print("📡 " + t("Discovering cameras...", "Kameralar aniqlanmoqda..."))
-    cams = devices.list_cameras()
-    print("🔎 " + t("Checking which cameras are live...",
-                    "Qaysi kameralar ishlayotgani tekshirilmoqda..."))
+    cam = CloudCam()                       # config.py / CLOUDCAM_* dan
+    cam.login()                            # saqlangan sessiya bo'lsa login QILINMAYDI
+    print(t(f"Session: {cam.auth_mode}", f"Sessiya: {cam.auth_mode}"))
+    cams = cam.cameras()
+    print(t("Checking which cameras are live...",
+            "Qaysi kameralar ishlayotgani tekshirilmoqda..."))
     try:
-        states = check_cameras(client, cams)
-    except Exception as e:                 # tekshiruv ixtiyoriy — ro'yxat baribir chiqadi
-        print("⚠️ " + t(f"Check failed: {e}", f"Tekshirib bo'lmadi: {e}"))
+        states = cam.check(cams)
+    except Exception as e:  # noqa: BLE001 — tekshiruv ixtiyoriy, ro'yxat baribir chiqadi
+        print(t(f"Check failed: {e}", f"Tekshirib bo'lmadi: {e}"))
         states = None
     chosen = choose_cameras(cams, states)
     if not chosen:
-        print("❌ " + t("No camera selected", "Hech qaysi kamera tanlanmadi"))
-        return
-
-    print("\n🚀 " + t(f"Starting {len(chosen)} camera(s)...",
-                      f"{len(chosen)} ta kamera ishga tushirilmoqda..."))
-
-    # StreamManager — client bilan (token refresh uchun)
-    manager = StreamManager(client=client)
-    manager.start_token_refresh(interval=3600)  # har soatda token yangilash
-
-    # Shifrlangan kameralar — get_camkey.py bilan kaliti olinganlar.
-    # Kaliti bor kamera = shifrlangan -> proxy --decrypt-video bilan ochiladi.
-    cam_keys = load_cam_keys()
-    if cam_keys:
-        print("🔓 " + t(f"Encrypted cameras (decryption on): {list(cam_keys)}",
-                         f"Shifrli kameralar (dekod yoqiladi): {list(cam_keys)}"))
-
-    labels, streams = [], []
-    for serial, ch, name in chosen:
-        # Hik-Connect kameralari hammasi RTP/HEVC yoki MPEG-PS -> har doim deshifrlovchi proxy.
-        # Kod bo'lmasa "AUTO": toza oqim avtomatik o'tadi; shifrli bo'lsa XATO beradi.
-        key = cam_keys.get(serial) or "AUTO"
-        st = manager.add(serial, channel=ch, decrypt=True, key=key)
-        streams.append(st)
-        labels.append(name[:22])
-
-    print("⏳ " + t("Connecting streams...", "Streamlar ulanmoqda..."))
-    print("\n📺 " + t("Controls: q=quit | 1-9=fullscreen | g=grid | s=status",
-                      "Boshqaruv: q=chiqish | 1-9=to'liq ekran | g=grid | s=holat") + "\n")
-
-    window = "EZVIZ 24/7"
-    cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window, 1280, 720)
-
-    fullscreen_idx = None
-    show_status = False
-
-    try:
-        while True:
-            statuses = [s.status() for s in streams]
-
-            if fullscreen_idx is not None and fullscreen_idx < len(streams):
-                frame = streams[fullscreen_idx].get_frame()
-                if frame is not None:
-                    big = cv2.resize(frame, (1280, 720))
-                else:
-                    big = np.zeros((720, 1280, 3), dtype=np.uint8)
-                    err = statuses[fullscreen_idx].get("error")
-                    if err:
-                        cv2.putText(big, t("ERROR!", "XATO!"), (560, 330),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-                        cv2.putText(big, err, (200, 380),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    else:
-                        cv2.putText(big, t("Connecting...", "Ulanmoqda..."), (560, 360),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 200, 255), 2)
-                st = statuses[fullscreen_idx]
-                color = (0, 255, 0) if st["connected"] else (0, 0, 255)
-                cv2.rectangle(big, (0, 0), (1280, 35), (0, 0, 0), -1)
-                cv2.putText(big, f"[{fullscreen_idx+1}] {labels[fullscreen_idx]}  "
-                                 f"{st['fps']}fps  reconnects:{st['reconnects']}  (g=grid)",
-                            (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-                cv2.imshow(window, big)
-            else:
-                frames = [s.get_frame() for s in streams]
-                grid = make_grid(frames, labels, statuses)
-                if grid is not None:
-                    cv2.imshow(window, grid)
-
-            if show_status:
-                online = sum(1 for s in statuses if s["connected"])
-                print(f"\r[{time.strftime('%H:%M:%S')}] "
-                      f"Online: {online}/{len(streams)}  ", end="", flush=True)
-
-            key = cv2.waitKey(30) & 0xFF
-            if key == ord("q"):
-                break
-            elif key == ord("g"):
-                fullscreen_idx = None
-            elif key == ord("s"):
-                show_status = not show_status
-            elif ord("1") <= key <= ord("9"):
-                idx = key - ord("1")
-                if idx < len(streams):
-                    fullscreen_idx = idx
-    finally:
-        print("\n🛑 " + t("Stopping...", "To'xtatilmoqda..."))
-        manager.stop_all()
-        cv2.destroyAllWindows()
+        print(t("No camera selected.", "Hech qaysi kamera tanlanmadi."))
+        cam.close()
+        return 1
+    return viewer.run(cam, cameras=chosen)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

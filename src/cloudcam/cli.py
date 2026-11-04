@@ -3,6 +3,7 @@
     cloudcam cameras                 # kameralar ro'yxati
     cloudcam cameras --check         # ... va har kanal haqiqatan ishlaydimi
     cloudcam keys                    # tasdiqlash kodlarini bulutdan olish
+    cloudcam code check <SERIAL> KOD  # kodni jonli oqimda tekshirish (code set — saqlash)
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
     cloudcam status                  # qurilmalar: onlayn, disklar, shifrlash
     cloudcam events [--watch]        # hodisalar (--watch: jonli push, cloudcam[events])
@@ -124,6 +125,93 @@ def cmd_keys(args) -> int:
     finally:
         cam.close()
     return 0
+
+
+def _save_code(serial: str, code: str) -> str:
+    """Kodni AYNAN berilgandek saqlaydi (registr — AES kalitning bir qismi).
+
+    `keys.set_code` katta harfga o'tkazadi; bu yerda kod oqimda tekshirilgan
+    yoki foydalanuvchi ataylab shunday yozgan. Buzuq fayl ustidan yozilmaydi."""
+    from cloudcam.sources.cloud import keys as _keys
+    stored = _keys.load(strict=True)
+    stored[serial] = code
+    _keys.save(stored)
+    return _keys._path()
+
+
+def cmd_code(args) -> int:
+    """Tasdiqlash kodini qo'lda saqlash (`set`) yoki jonli oqimda tekshirish (`check`)."""
+    from cloudcam.settings import set_active
+    from cloudcam.sources.cloud.keys import KeysFileError
+
+    s = Settings.resolve()
+    if args.platform:
+        s = s.replace(platform=args.platform)
+    set_active(s)
+    try:
+        if args.code_cmd == "set":
+            pairs = args.pairs
+            if len(pairs) % 2:
+                sys.exit(t("Usage: cloudcam code set SERIAL CODE [SERIAL CODE ...]",
+                           "Foydalanish: cloudcam code set SERIAL KOD [SERIAL KOD ...]"))
+            for serial, code in zip(pairs[::2], pairs[1::2]):
+                path = _save_code(serial, code.strip())
+                print(f"{serial}  {code.strip()}")
+            print(t(f"Saved to {path}", f"{path} ga saqlandi"))
+            return 0
+        return _code_check(args, s)
+    except KeysFileError as e:
+        sys.exit(str(e))
+
+
+def _code_check(args, s) -> int:
+    from cloudcam.sources.cloud import codecheck
+    from cloudcam.sources.cloud.stream import _make_client
+
+    # Faqat saqlangan sessiya kerak — parol so'ralmaydi.
+    try:
+        client = _make_client(s)
+    except RuntimeError as e:
+        sys.exit(t(f"{e}. Run any account command first, e.g. `cloudcam cameras`.",
+                   f"{e}. Avval hisob buyrug'ini ishga tushiring, masalan `cloudcam cameras`."))
+    code = args.code.strip() if args.code else None
+    channels = [1, 2, 3, 4] if args.channel == "all" else [int(args.channel)]
+    failed = 0
+    for ch in channels:
+        tag = f"{args.serial} ch{ch}"
+        print(t(f"Checking {tag} ...", f"Tekshirilmoqda: {tag} ..."), flush=True)
+        if code:
+            used, res = codecheck.check_with_case_fallback(
+                client, args.serial, code, ch,
+                on_retry=lambda u: print(t(f"  retrying in upper case: {u}",
+                                           f"  katta harf bilan qayta: {u}"), flush=True))
+        else:
+            used, res = None, codecheck.check(client, args.serial, None, ch)
+        if res == codecheck.CORRECT:
+            path = _save_code(args.serial, used)
+            print(t(f"{tag}: code is correct, stream decrypted. Saved to {path}.",
+                    f"{tag}: kod to'g'ri, oqim ochildi. {path} ga saqlandi."))
+        elif res == codecheck.CLEAR:
+            print(t(f"{tag}: camera is not encrypted; no code needed.",
+                    f"{tag}: kamera shifrlanmagan; kod kerak emas."))
+        elif res == codecheck.WRONG and not code:
+            failed += 1
+            print(t(f"{tag}: camera is encrypted; pass its code: "
+                    f"cloudcam code check {args.serial} <CODE>",
+                    f"{tag}: kamera shifrlangan; kodini bering: "
+                    f"cloudcam code check {args.serial} <KOD>"))
+        elif res == codecheck.WRONG:
+            failed += 1
+            print(t(f"{tag}: wrong code.", f"{tag}: kod noto'g'ri."))
+        elif res == codecheck.TIMEOUT:
+            failed += 1
+            print(t(f"{tag}: no keyframe yet (slow or offline); try again.",
+                    f"{tag}: keyframe kelmadi (sekin yoki oflayn); qayta urining."))
+        else:
+            failed += 1
+            print(t(f"{tag}: no stream (camera offline or empty channel).",
+                    f"{tag}: oqim yo'q (kamera oflayn yoki kanal bo'sh)."))
+    return 1 if failed else 0
 
 
 def cmd_isup(args) -> int:
@@ -329,6 +417,24 @@ def main(argv=None) -> int:
                     help=t("re-fetch codes that are already stored",
                            "saqlangan kodlarni ham qayta olish"))
     kp.set_defaults(fn=cmd_keys)
+
+    cdp = sub.add_parser("code", help=t("save or verify a verification code by hand",
+                                        "tasdiqlash kodini qo'lda saqlash yoki tekshirish"))
+    csub = cdp.add_subparsers(dest="code_cmd", required=True)
+    cc = csub.add_parser("check", help=t("verify a code against the live stream; "
+                                         "saves it if correct",
+                                         "kodni jonli oqimda tekshirish; to'g'ri bo'lsa saqlash"))
+    cc.add_argument("serial")
+    cc.add_argument("code", nargs="?", default=None,
+                    help=t("omit to only detect whether the camera is encrypted",
+                           "berilmasa — faqat shifrlanganmi, aniqlanadi"))
+    cc.add_argument("--channel", default="1",
+                    help=t("channel number, or `all` for NVR channels 1-4",
+                           "kanal raqami yoki NVR 1-4 kanallari uchun `all`"))
+    cs = csub.add_parser("set", help=t("store codes without verifying (case kept)",
+                                       "kodlarni tekshirmasdan saqlash (registr saqlanadi)"))
+    cs.add_argument("pairs", nargs="+", metavar="SERIAL CODE")
+    cdp.set_defaults(fn=cmd_code)
 
     ip = sub.add_parser("isup", help=t("ISUP 5.0 bridge (cloud-free cameras)",
                                      "ISUP 5.0 ko'prigi (bulutsiz kameralar)"))

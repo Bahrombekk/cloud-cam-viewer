@@ -9,6 +9,10 @@ minor versions; such changes are always listed here.
 ## [Unreleased]
 
 ### Added
+- `cloudcam code check SERIAL [CODE] [--channel N|all]` verifies a verification code on
+  the live stream and saves it if correct; `cloudcam code set` stores codes as typed.
+  `check` needs only the saved session, not the password. The logic moved from
+  `scripts/check_code.py` into the package (`cloudcam.sources.cloud.codecheck`).
 - **Device status** (`cloudcam status`, `CloudCam.status()`): online/offline, NVR disk
   state and capacity, video encryption, privacy mode, in one request for the whole account.
 - **Events** (`cloudcam events`, `CloudCam.events()`, `CloudCam.event_image()`): recent
@@ -39,6 +43,13 @@ minor versions; such changes are always listed here.
   `TOKEN_FILE` / `CAMKEY_FILE` in `config.py` now resolve next to `config.py`; relative
   `CLOUDCAM_TOKEN_FILE` / `CLOUDCAM_CAMKEY_FILE` are made absolute. Legacy files in the
   working directory are copied (not moved) on the first login.
+- Helper scripts are thin wrappers over the package: `check_code.py` / `set_code.py`
+  call `cloudcam code`, and `app.py` / `single.py` use the same viewer as
+  `cloudcam view` (the grid code was duplicated). `config.py` may omit any setting.
+- The grid viewer sizes tiles to the window instead of drawing every tile at
+  `display_width x display_height` and shrinking the result: with 23 cameras the grid
+  was about 6400x3600 pixels per refresh and the labels were unreadable. Closing the
+  window now exits the viewer.
 - **BREAKING — package layout.** The code moved to a `src/` layout and is split into
   layers that may only import downwards (`core < codec < media < sources < app`),
   enforced by `tests/test_layout.py`. `decrypt_proxy.py` (1290 lines, six jobs) is now

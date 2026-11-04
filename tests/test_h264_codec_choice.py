@@ -79,10 +79,10 @@ def test_encrypted_property_is_public():
     assert dec.encrypted is False
 
 
-def test_check_code_script_picks_the_codec():
-    """`check_code.py` ni import qilib bo'lmaydi (u `config` ni talab qiladi),
-    shuning uchun manba matni qo'riqlanadi."""
-    text = (ROOT / "scripts" / "check_code.py").read_text(encoding="utf-8")
+def test_code_check_picks_the_codec():
+    """Kod tekshiruvi ([[codecheck]]) RTP codec'ini aniqlashi kerak."""
+    text = (ROOT / "src" / "cloudcam" / "sources" / "cloud" / "codecheck.py").read_text(
+        encoding="utf-8")
     assert "detect_rtp_codec" in text, "codec aniqlanmayapti"
     assert "H264RtpDecryptor" in text, "H.264 dekodlovchi ishlatilmayapti"
     assert "._decrypt" not in text, "ichki atribut o'qilmoqda — `encrypted` ishlating"

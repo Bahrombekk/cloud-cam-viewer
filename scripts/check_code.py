@@ -1,177 +1,27 @@
+"""Verify a camera verification code against the live stream.
+
+Equivalent to `cloudcam code check`; kept for the old command line:
+
+    python scripts/check_code.py <SERIAL>               # is the camera encrypted?
+    python scripts/check_code.py <SERIAL> <CODE>        # verify, save if correct
+    python scripts/check_code.py <SERIAL> <CODE> all    # NVR channels 1-4
 """
-Shifrlangan kamera "verification code" (shifr paroli) ni tekshirish.
-
-Kamera oqimidan birinchi keyframe (VPS) ni olib, kod to'g'ri/noto'g'ri yoki
-kamera umuman shifrlanmaganligini aniqlaydi. To'g'ri bo'lsa cam_keys.json ga saqlaydi.
-
-Ishga tushirish:
-    python scripts/check_code.py <SERIAL> <KOD> [KANAL]
-    python scripts/check_code.py <SERIAL>             # kodsiz: toza/shifrli ekanini aniqlaydi
-    python scripts/check_code.py <SERIAL> <KOD> all   # NVR ning hamma (1-4) kanalini tekshiradi
-"""
-
-import logging
-import os
 import sys
-import time
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-except Exception:
-    pass
+import _bootstrap  # noqa: F401  (sys.path, stdout)
 
-logging.basicConfig(level=logging.CRITICAL)
-
-import os as _os  # noqa: E402
-import sys as _sys  # noqa: E402
-
-# config.py: joriy papkada yoki loyiha ildizida (scripts/ ichidan ham ishlaydi).
-_sys.path[:0] = [_os.getcwd(),
-                 _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))]
-
-import config
-
-# token.json / cam_keys.json config.py yonida turadi — qayerdan ishga tushirilsa ham.
-if getattr(config, "__file__", None):
-    _os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
-
-from cloudcam.codec.nal import HEVC_VIDEO_PT
-from cloudcam.codec.ps import PsStreamDecryptor
-from cloudcam.codec.rtp import H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec
-from cloudcam.sources.cloud import keys as _keys
-from cloudcam.sources.cloud import stream as cloud_stream
-from cloudcam.sources.cloud.stream import open_cloud_stream
-from cloudcam.i18n import t
-from cloudcam.sources.cloud.vtm import rtp_payload
+from cloudcam.cli import main
 
 
-def check(client, serial, code, channel=1, timeout=30):
-    """Qaytaradi: 'correct' | 'wrong' | 'clear' | 'timeout' | 'nostream'."""
-    key = code or "AUTO"
-    dec = None
-    is_rtp = None
-    pending = []          # codec aniqlanmaguncha paketlar shu yerda kutadi
-    t0 = time.time()
-    try:
-        with open_cloud_stream(client, serial, channel=channel, timeout=20.0) as s:
-            s.start()
-            for pkt in s.iter_packets(max_packets=5000):
-                b = bytes(pkt.body)
-                if is_rtp is None:
-                    is_rtp = len(b) >= 1 and (b[0] >> 6) == 2
-                if dec is None:
-                    if not is_rtp:
-                        dec = PsStreamDecryptor(key)   # PS o'zi H.264/HEVC ni aniqlaydi
-                    else:
-                        # RTP: codec'ni ANIQLAYMIZ. Ilgari bu yerda doim HEVC
-                        # dekodlovchi yaratilardi — H.264 kamerada esa param-set
-                        # hech qachon topilmay, kod TO'G'RI bo'lsa ham "timeout"
-                        # chiqardi.
-                        pending.append(b)
-                        if (b[1] & 0x7F) == HEVC_VIDEO_PT:
-                            pl = rtp_payload(b)
-                            codec = detect_rtp_codec(pl[0]) if len(pl) >= 1 else None
-                            if codec:
-                                dec = (H264RtpDecryptor(key) if codec == "h264"
-                                       else HevcRtpDecryptor(key))
-                        if dec is None:
-                            if len(pending) > 400 or time.time() - t0 > timeout:
-                                return "timeout"
-                            continue
-                        for old in pending:            # kutgan paketlarni ham beramiz
-                            dec.feed(old)
-                        pending = []
-                        if dec.encrypted is not None or dec.key_error:
-                            break
-                        continue
-                dec.feed(b)
-                if dec.encrypted is not None or dec.key_error:
-                    break
-                if time.time() - t0 > timeout:
-                    return "timeout"
-    except Exception:
-        return "nostream"
-    if dec is None:
-        return "nostream"
-    if dec.key_error:
-        return "wrong"
-    if dec.encrypted is False:
-        return "clear"
-    if dec.encrypted is True:
-        return "correct"
-    return "timeout"
-
-
-def save_code(serial, code):
-    """Kutubxona orqali: 0600, atomar ([[cloudcam.sources.cloud.keys]]).
-
-    Registr SAQLANADI (keys.set_code katta harfga o'tkazadi — bu yerda kod
-    allaqachon oqimda tekshirilgan). Fayl bor-u o'qilmasa YOZMAYMIZ: avval
-    bitta kod bilan qayta yozilib, qolgan barcha kodlar o'chib ketardi."""
-    path = config.CAMKEY_FILE
-    keys = _keys.load(path)
-    if not keys and os.path.exists(path) and os.path.getsize(path) > 0:
-        raise SystemExit(t(f"{path} is unreadable - not overwriting it",
-                           f"{path} o'qilmadi — ustidan yozilmaydi"))
-    keys[serial] = code
-    _keys.save(keys, path)
-
-
-def report(serial, code, channel, result):
-    tag = f"{serial} ch{channel}"
-    if result == "correct":
-        print(f"✅ {tag}: " + t("CODE IS CORRECT! Stream decrypted.",
-                              "KOD TO'G'RI! Shifr ochildi."))
-        save_code(serial, code)
-        print("   💾 " + t(f"Saved to cam_keys.json: {serial} -> {code}",
-                          f"cam_keys.json ga saqlandi: {serial} -> {code}"))
-    elif result == "clear":
-        print(f"⚠️  {tag}: " + t("camera is NOT ENCRYPTED — no code needed.",
-                               "kamera SHIFRLANMAGAN — kod kerak emas (kodsiz ishlaydi)."))
-    elif result == "wrong":
-        print(f"❌ {tag}: " + t("WRONG CODE! Try another one.",
-                              "KOD NOTO'G'RI! Boshqa kodni sinab ko'ring."))
-    elif result == "timeout":
-        print(f"⏱  {tag}: " + t("no keyframe (slow/offline) — try again.",
-                              "keyframe kelmadi (sekin/offline) — qayta urining."))
-    else:
-        print(f"❌ {tag}: " + t("no stream (camera offline or empty channel).",
-                              "oqim yo'q (kamera offline yoki kanal bo'sh)."))
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(t("Usage: python scripts/check_code.py <SERIAL> [CODE] [CHANNEL|all]",
-                "Foydalanish: python scripts/check_code.py <SERIAL> [KOD] [KANAL|all]"))
-        return
-    serial = sys.argv[1]
-    code = sys.argv[2].strip() if len(sys.argv) > 2 else "AUTO"
-    ch_arg = sys.argv[3] if len(sys.argv) > 3 else "1"
-    channels = [1, 2, 3, 4] if ch_arg == "all" else [int(ch_arg)]
-
-    client = cloud_stream._make_client()
-    for ch in channels:
-        print("🔎 " + t(f"Checking: {serial} ch{ch} (code: {code}) ...",
-                         f"Tekshirilmoqda: {serial} ch{ch} (kod: {code}) ..."))
-        used, result = check_with_case_fallback(client, serial, code, ch)
-        report(serial, used, ch, result)
-
-
-def check_with_case_fallback(client, serial, code, channel=1):
-    """Kod AES kalit — registrga SEZGIR. Yorliqdagi kod katta harfli, lekin
-    foydalanuvchi kichik harf bilan yozishi mumkin; ilovada o'zgartirilgan kod
-    esa kichik harfli bo'lishi ham mumkin. Shuning uchun avval AYNAN berilgani,
-    xato bo'lsa katta harflisi sinaladi. Qaytaradi: (ishlatilgan_kod, natija)."""
-    result = check(client, serial, code, channel)
-    upper = code.upper()
-    if result == "wrong" and upper != code:
-        print("   ↻ " + t(f"retrying in upper case: {upper}",
-                           f"katta harf bilan qayta: {upper}"))
-        r2 = check(client, serial, upper, channel)
-        if r2 == "correct":
-            return upper, r2
-    return code, result
+def _argv(args):
+    out = ["code", "check"] + args[:2]
+    if len(args) > 2:
+        out += ["--channel", args[2]]
+    return out
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) < 2:
+        print(__doc__.strip())
+        raise SystemExit(1)
+    raise SystemExit(main(_argv(sys.argv[1:])))

@@ -123,8 +123,7 @@ def test_get_devices_follows_pages():
 # ---- 6. kod registri ---------------------------------------------------------
 
 def _check_code(monkeypatch, correct):
-    sys.modules.setdefault("config", types.ModuleType("config"))
-    import check_code
+    from cloudcam.sources.cloud import codecheck as check_code
     tried = []
 
     def fake_check(client, serial, code, channel=1):
