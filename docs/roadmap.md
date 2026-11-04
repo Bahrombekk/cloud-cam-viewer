@@ -29,11 +29,8 @@ operability, **P2** hardening and polish.
 
 ## 2. Reliability (P0)
 
-- [ ] **Concurrent session refresh.** Every per-camera proxy that gets HTTP 401 calls
-  `CloudClient.refresh_and_save` at the same time. The refresh token rotates, so all
-  but one can be rejected and fall back to a full login (CAPTCHA / 2FA risk).
-  Approach: a lock file next to `token.json` around read-refresh-write, re-reading the
-  file after acquiring it.
+- [x] **Concurrent session refresh** (0.4): `core.fsutil.file_lock` around every
+  refresh/login path, token file re-read after the lock is taken.
 - [ ] **Watchdog vs. `auto` stream mode.** `CameraStream.FREEZE_TIMEOUT` is 20 s; the
   proxy may spend 6 s probing the substream and up to 20 s on the main stream, so a
   slow camera can be killed before its first frame and loop. Approach: measure, then

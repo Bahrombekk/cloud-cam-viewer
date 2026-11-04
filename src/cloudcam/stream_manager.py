@@ -582,17 +582,19 @@ class StreamManager:
     def _refresh_and_save(self, path):
         """Avval parolsiz (boshqa jarayon yangilagan bo'lsa — o'shani olib),
         bulut refresh tokenni rad etsagina parol bilan qayta kiradi."""
+        from cloudcam.core.fsutil import file_lock
         from cloudcam.sources.cloud.client import SessionExpired
-        again = getattr(self.client, "refresh_and_save", None)
-        if again is None:                       # eski/soxta mijoz
-            self.client.refresh_session()
-            self.client.save_token(path)
-            return
-        try:
-            again(path)
-        except SessionExpired:
-            self.client.login()
-            self.client.save_token(path)
+        with file_lock(path):                   # boshqa jarayonlar bilan bittalab
+            again = getattr(self.client, "refresh_and_save", None)
+            if again is None:                   # eski/soxta mijoz
+                self.client.refresh_session()
+                self.client.save_token(path)
+                return
+            try:
+                again(path)
+            except SessionExpired:
+                self.client.login()
+                self.client.save_token(path)
 
     def stop_all(self):
         self._running = False

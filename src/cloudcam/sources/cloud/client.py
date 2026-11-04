@@ -23,7 +23,7 @@ import time
 
 import requests
 
-from cloudcam.core.fsutil import harden, write_private
+from cloudcam.core.fsutil import file_lock, harden, write_private
 from cloudcam.i18n import t
 from cloudcam.core.identity import feature_code
 
@@ -284,28 +284,34 @@ class CloudClient:
         CAPTCHA (1015) va "yangi qurilma" 2FA sini keltirib chiqaradi —
         `ezviz-ha-addon` aynan shuning uchun sessiyani diskda saqlaydi."""
         path = path or self._default_token_file()
-        if self.load_token(path):
-            if not self.is_refresh_needed():
-                return "resumed"
-            try:
-                self.refresh_session(allow_login=False)
-                self.save_token(path)
-                return "refreshed"
-            except SessionExpired:
-                pass                 # bulut rad etdi -> to'liq login
-            # Tarmoq xatosi o'zicha ko'tariladi: parol bilan kirish ham
-            # baribir o'tmasdi, faqat CAPTCHA xavfi qo'shilardi.
-        if not self.password:
-            # Parolsiz rejim (masalan `cloudcam serve` ishga tushirgan oqimlar):
-            # faqat saqlangan sessiya ishlatiladi.
-            raise LoginRequired(t(
-                f"No usable session in {path} and no password configured; "
-                f"log in once with the email and password",
-                f"{path} da yaroqli sessiya yo'q va parol berilmagan; "
-                f"email va parol bilan bir marta kiring"))
-        self.login()
-        self.save_token(path)
-        return "login"
+        if self.load_token(path) and not self.is_refresh_needed():
+            return "resumed"                 # tezkor yo'l: qulfsiz
+        # Yangilash yoki login kerak — boshqa jarayonlar bilan BITTALAB ([[file_lock]]).
+        # Qulfni olgach fayl QAYTA o'qiladi: kutib turgan paytda boshqa jarayon
+        # sessiyani yangilagan bo'lsa, o'shani olamiz va bulutga borilmaydi.
+        with file_lock(path):
+            if self.load_token(path):
+                if not self.is_refresh_needed():
+                    return "resumed"
+                try:
+                    self.refresh_session(allow_login=False)
+                    self.save_token(path)
+                    return "refreshed"
+                except SessionExpired:
+                    pass                 # bulut rad etdi -> to'liq login
+                # Tarmoq xatosi o'zicha ko'tariladi: parol bilan kirish ham
+                # baribir o'tmasdi, faqat CAPTCHA xavfi qo'shilardi.
+            if not self.password:
+                # Parolsiz rejim (masalan `cloudcam serve` ishga tushirgan oqimlar):
+                # faqat saqlangan sessiya ishlatiladi.
+                raise LoginRequired(t(
+                    f"No usable session in {path} and no password configured; "
+                    f"log in once with the email and password",
+                    f"{path} da yaroqli sessiya yo'q va parol berilmagan; "
+                    f"email va parol bilan bir marta kiring"))
+            self.login()
+            self.save_token(path)
+            return "login"
 
     @staticmethod
     def _default_token_file() -> str:
@@ -497,18 +503,22 @@ class CloudClient:
         tushirish to'liq loginga tushardi. Avval faylni qayta o'qiymiz: boshqa
         jarayon allaqachon yangilagan bo'lsa, uning sessiyasini olamiz."""
         path = path or self.token_path or self._default_token_file()
-        try:
-            with open(path, encoding="utf-8") as f:
-                tok = json.load(f)
-            newer = (tok.get("session_id") and tok["session_id"] != self.session_id
-                     and float(tok.get("session_time") or 0) > (self.session_time or 0))
-        except (OSError, ValueError, TypeError):
-            newer = False
-        if newer and self.load_token(path):
-            return "adopted"
-        self.refresh_session(allow_login=False)
-        self.save_token(path)
-        return "refreshed"
+        # "O'qi -> yangila -> yoz" bittalab ([[file_lock]]): aks holda bir vaqtda 401
+        # olgan bir necha jarayon bitta refresh tokenni yuborib, biridan boshqasi
+        # rad etilardi (token har yangilanishda almashadi).
+        with file_lock(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    tok = json.load(f)
+                newer = (tok.get("session_id") and tok["session_id"] != self.session_id
+                         and float(tok.get("session_time") or 0) > (self.session_time or 0))
+            except (OSError, ValueError, TypeError):
+                newer = False
+            if newer and self.load_token(path):
+                return "adopted"
+            self.refresh_session(allow_login=False)
+            self.save_token(path)
+            return "refreshed"
 
     def save_token(self, path="ezviz_token.json"):
         """Sessiyani diskka yozadi — keyingi ishga tushirish login QILMAYDI.

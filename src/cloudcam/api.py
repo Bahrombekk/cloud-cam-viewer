@@ -179,8 +179,10 @@ class CloudCam:
         from cloudcam.core import paths
         self.migrated = paths.migrate_legacy(self.settings)
         if force:
-            self.client.login()
-            self.client.save_token(self.settings.token_file)
+            from cloudcam.core.fsutil import file_lock
+            with file_lock(self.settings.token_file):
+                self.client.login()
+                self.client.save_token(self.settings.token_file)
             self.auth_mode = "login"
         else:
             self.auth_mode = self.client.connect(self.settings.token_file)
@@ -189,8 +191,10 @@ class CloudCam:
         return self
 
     def refresh_token(self) -> None:
-        self.client.refresh_session()
-        self.client.save_token(self.settings.token_file)
+        from cloudcam.core.fsutil import file_lock
+        with file_lock(self.settings.token_file):
+            self.client.refresh_session()
+            self.client.save_token(self.settings.token_file)
 
     # ── tasdiqlash kodlari ───────────────────────────────────────────
     def fetch_keys(self, serials=None, *, mfa_code=None, overwrite=False):

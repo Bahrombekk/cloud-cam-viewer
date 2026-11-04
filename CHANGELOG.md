@@ -29,6 +29,16 @@ minor versions; such changes are always listed here.
 - Account commands work with only a saved session; without a password no login is
   attempted (`LoginRequired`) instead of sending an empty password.
 
+### Fixed
+- **Concurrent session refresh.** Processes sharing `token.json` (viewer, CLI, the
+  `cloudcam stream` processes under `serve`) could refresh at the same time; the refresh
+  token rotates, so all but one sent a stale token, were rejected and fell back to a full
+  login (CAPTCHA / new-device 2FA risk). Refresh and login now run under a cross-process
+  lock (`<token file>.lock`, `fcntl` / `msvcrt`, no new dependency), and the token file is
+  re-read after the lock is taken, so waiting processes adopt the new session. Measured
+  in tests: 8 concurrent 401s -> 1 refresh, 0 rejected (7 rejected without the lock);
+  6 processes starting on a stale session -> 1 refresh (6 without).
+
 ### Changed
 - `cloudcam stream` gives its proxy a free port (many run side by side under `serve`) and
   has `--no-refresh` (the session is refreshed by the parent).
