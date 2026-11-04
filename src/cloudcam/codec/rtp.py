@@ -58,23 +58,49 @@ class _RtpSeqMixin:
         self._last_seq = {}    # {(ssrc, pt): oxirgi seq}
         self.seq_gaps = 0      # diagnostika
         self.dup_packets = 0
+        self.late_packets = 0  # tartibsiz (eski seq) — tashlanadi
+        self.bad_packets = 0   # buzuq RTP — tashlanadi, sessiya uzilmaydi
+        self._late_run = {}    # {(ssrc, pt): ketma-ket "eski" paketlar}
+
+    def _payload(self, pkt: bytes):
+        """RTP yuki yoki None (buzuq paket). Bitta buzuq paket avval butun
+        sessiyani uzib, proxy + ffmpeg qayta ishga tushishiga olib kelardi."""
+        try:
+            return rtp_payload(pkt)
+        except RtpError:
+            self.bad_packets += 1
+            self._cur = None
+            return None
 
     def _check_seq(self, pkt: bytes) -> bool:
         """False — paket takroriy (tashlanadi). Uzilishda joriy FU bekor qilinadi."""
         if len(pkt) < 12:
-            return True
+            self.bad_packets += 1
+            return False
         seq = (pkt[2] << 8) | pkt[3]
         stream = (bytes(pkt[8:12]), pkt[1] & 0x7F)      # (SSRC, PT)
         last = self._last_seq.get(stream)
-        self._last_seq[stream] = seq
         if last is None:
+            self._last_seq[stream] = seq
             return True
-        if seq == last:
+        diff = (seq - last) & 0xFFFF
+        if diff == 0:
             self.dup_packets += 1
             return False
+        if diff >= 0x8000:
+            # Kechikkan (eski) paket: hisoblagichni ORQAGA surmaymiz, aks holda
+            # 10,12,11,13 tartibi uchta soxta uzilish berardi. Ketma-ket ko'p
+            # "eski" paket esa — oqim seq'ni qayta boshlagan: qabul qilamiz.
+            run = self._late_run.get(stream, 0) + 1
+            if run < 50:
+                self._late_run[stream] = run
+                self.late_packets += 1
+                return False
+        self._late_run.pop(stream, None)
+        self._last_seq[stream] = seq
         # Faqat VIDEO oqimidagi uzilish yig'ilayotgan NAL'ga tegadi (audio
         # paketi yo'qolsa video FU'ni tashlash — keraksiz buzilish).
-        if seq != (last + 1) & 0xFFFF and stream[1] == HEVC_VIDEO_PT:
+        if diff != 1 and stream[1] == HEVC_VIDEO_PT:
             self.seq_gaps += 1
             self._cur = None   # yarim NAL — bo'lagi yo'q, tashlaymiz
         return True
@@ -94,7 +120,9 @@ class HevcRtpDecryptor(_RtpSeqMixin, _NalDecryptBase):
             return b""
         if (rtp_packet[1] & 0x7F) != HEVC_VIDEO_PT:
             return b""
-        pl = rtp_payload(rtp_packet)
+        pl = self._payload(rtp_packet)
+        if pl is None:
+            return b""
         if len(pl) < 3:
             return b""
         out = bytearray()
@@ -145,7 +173,9 @@ class H264RtpDecryptor(_RtpSeqMixin, _NalDecryptBase):
             return b""
         if (rtp_packet[1] & 0x7F) != HEVC_VIDEO_PT:
             return b""
-        pl = rtp_payload(rtp_packet)
+        pl = self._payload(rtp_packet)
+        if pl is None:
+            return b""
         if len(pl) < 1:
             return b""
         out = bytearray()

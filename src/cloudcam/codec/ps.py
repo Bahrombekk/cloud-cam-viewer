@@ -13,6 +13,26 @@ from cloudcam.codec.nal import _NalDecryptBase
 # bufer cheksiz o'sardi (jarayon xotirasi oqib ketardi) — chegaradan oshsa
 # oxirgi start-kodga resync qilamiz.
 _MAX_PS_BUF = 4 << 20
+# Codec aniqlanmaguncha saqlanadigan NAL'lar soni. Oqim GOP o'rtasidan
+# boshlansa keyingi VPS/SPS gacha yuzlab P-slice kelishi mumkin — ular IRAP'siz
+# baribir dekodlanmaydi, shuning uchun eng eskilari tashlanadi.
+_MAX_UNDECIDED = 300
+
+
+def _next_ps_start(b, start: int) -> int:
+    """PS darajasidagi keyingi start kod (pack/end/PES), NAL start kodlari emas.
+
+    Cheksiz (length=0) video PES ichida NAL'lar ham `00 00 01` bilan
+    boshlanadi — oddiy `find` birinchi NAL'da to'xtab, uning header baytini
+    stream id deb o'qirdi."""
+    i = b.find(b"\x00\x00\x01", start)
+    while i >= 0:
+        if i + 3 >= len(b):
+            return -1
+        if b[i + 3] >= 0xB9:
+            return i
+        i = b.find(b"\x00\x00\x01", i + 3)
+    return -1
 
 
 
@@ -38,6 +58,8 @@ class PsStreamDecryptor(_NalDecryptBase):
             return
         if self._decrypt is None:                 # codec/shifr hali aniqlanmagan
             self._undecided.append(bytes(nal))
+            if len(self._undecided) > _MAX_UNDECIDED:
+                del self._undecided[:-_MAX_UNDECIDED]
             res = self._decide(self._undecided)
             if res == "keyerror":
                 self.key_error = True
@@ -111,7 +133,16 @@ class PsStreamDecryptor(_NalDecryptBase):
                 return ("h264", 0, True)
             if ((d[0] >> 1) & 0x3F) == 32 and d[2] == 0x0C and ok265(decB):
                 return ("hevc", 0, True)
-        if len(big) >= 24:        # yetarli NAL bor, lekin hech narsa mos kelmadi -> kod xato
+        if len(big) >= 24:        # yetarli NAL bor, lekin hech narsa mos kelmadi
+            # Oqim GOP o'rtasidan boshlangan bo'lsa (bulut shunday qiladi) hali
+            # VPS/SPS kelmagan — headerlar toza va haqiqiy bo'lsa KUTAMIZ.
+            # "Kod xato" faqat param-set ko'rilib, kalit uni ocholmaganda yoki
+            # headerlarning o'zi ma'nosiz bo'lganda (butun NAL shifrli).
+            saw_param_set = any(
+                (n[0] & 0x80) == 0 and ((n[0] & 0x1F) == 7 or ((n[0] >> 1) & 0x3F) == 32)
+                for n in big)
+            if not saw_param_set and (ok264(big) or ok265(big)):
+                return None
             return "keyerror"
         return None
 
@@ -134,6 +165,8 @@ class PsStreamDecryptor(_NalDecryptBase):
                 pos = end
             elif code == 0xB9:  # MPEG end
                 pos = sc + 4
+            elif code < 0xB9:  # PS emas (NAL start kodi / resync qoldig'i) — o'tamiz
+                pos = sc + 3
             elif 0xE0 <= code <= 0xEF:  # video PES
                 if sc + 9 > n:
                     break
@@ -147,8 +180,8 @@ class PsStreamDecryptor(_NalDecryptBase):
                         break
                     self._es += b[payload_start:end]
                     pos = end
-                else:  # cheksiz: keyingi start kodgacha
-                    nxt = b.find(b"\x00\x00\x01", payload_start)
+                else:  # cheksiz: keyingi PS start kodgacha (NAL start kodlari emas)
+                    nxt = _next_ps_start(b, payload_start)
                     if nxt < 0:
                         break  # to'liq emas — keyingi chunk'ni kutamiz
                     self._es += b[payload_start:nxt]
