@@ -48,6 +48,10 @@ _CACHE_KEY = vtm_cache.account_key()
 
 
 STREAM_PROBE_TIMEOUT = 6.0     # "auto" rejimda substream shuncha kutiladi
+# Ochilgan sessiyaning o'qish timeout'i. Bulut oqimi to'xtab-to'xtab keladi: bir
+# kanalning ikkinchi sessiyasi yopilganda ba'zi NVR'lar (o'lchandi: DS-7608NI-Q1)
+# qolgan oqimni ~10 s to'xtatadi, keyin davom ettiradi.
+STREAM_TIMEOUT = 20.0
 
 
 def host_allowed(host: str | None, port: int) -> bool:
@@ -161,8 +165,8 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                 return _is_missing_resource(e) and vtm_cache.refresh_pagelist(client, _CACHE_KEY)
 
             # "auto": avval KICHIK oqim, kadr kelmasa asosiysi ([[serve]]).
-            attempts = [("sub", STREAM_PROBE_TIMEOUT), ("main", 20.0)] if mode == "auto" \
-                else [(mode, 20.0)]
+            attempts = [("sub", STREAM_PROBE_TIMEOUT), ("main", STREAM_TIMEOUT)] \
+                if mode == "auto" else [(mode, STREAM_TIMEOUT)]
             opened = None
             for round_ in range(2):               # 2-davra: ro'yxat yangilangandan keyin
                 retry = False
@@ -201,6 +205,13 @@ def serve(serial: str, port: int, key: str, channel: int = 1,
                         _fail_open(e)
                         return
                     if primed[0] or not is_probe:
+                        if is_probe:
+                            # Substream ishladi — SINOV timeout'i (6 s) butun sessiyaga
+                            # qolmasin: aks holda bulutning ~10 s pauzasida recv uzilib,
+                            # `/sub` oqimi o'zini yopardi (jonli sinovda topilgan).
+                            set_timeout = getattr(stream, "set_timeout", None)
+                            if set_timeout is not None:
+                                set_timeout(STREAM_TIMEOUT)
                         opened = (cm, stream, pkts, primed)
                         break
                     cm.__exit__(None, None, None)     # substream bo'sh — keyingi urinish

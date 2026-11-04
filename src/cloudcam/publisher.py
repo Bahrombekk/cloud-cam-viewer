@@ -141,7 +141,9 @@ class RtspPublisher(CameraStream):
                 last = frame
         if drain is not None:
             drain.join(timeout=1.0)
-        if total == 0 and self._stderr and not self.error:
+        if self._stderr and self.running and (total == 0 or not self.error):
+            # Oqim davomida uzilsa ham sabab ko'rinsin (`cloudcam serve` logida) —
+            # ilgari faqat birinchi kadr kelmaganda ko'rsatilardi.
             self.error = "ffmpeg: " + self._stderr[-1]
             self._error_transient = True
         return total

@@ -41,6 +41,10 @@ class FakeStream:
     def __init__(self, packets):
         self._packets = packets
         self.started = False
+        self.timeouts = []
+
+    def set_timeout(self, t):
+        self.timeouts.append(t)
 
     def start(self):
         self.started = True
@@ -182,3 +186,40 @@ def test_auto_falls_back_when_opening_the_substream_raises(proxy, monkeypatch):
     body = proxy("auto", _open)
     assert asked == [True, False]
     assert body
+
+
+def test_probe_timeout_does_not_stay_for_the_whole_session(proxy, monkeypatch):
+    """Substream 6 s lik SINOV timeout'i bilan ochiladi. U sessiyaga qolsa, bulutning
+    ~10 s pauzasida (bir kanalning ikkinchi oqimi yopilganda, DS-7608NI-Q1 da
+    o'lchangan) recv uzilib, `cloudcam serve` dagi `/sub` yo'li o'zini yopardi."""
+    cm = FakeCm(PACKETS)
+    proxy("auto", lambda *a, **k: cm)
+    assert cm.stream.timeouts == [decrypt_proxy.STREAM_TIMEOUT]
+    assert decrypt_proxy.STREAM_TIMEOUT > 10 > decrypt_proxy.STREAM_PROBE_TIMEOUT
+
+
+def test_main_mode_keeps_its_timeout(proxy, monkeypatch):
+    cm = FakeCm(PACKETS)
+    proxy("main", lambda *a, **k: cm)
+    assert cm.stream.timeouts == [], "asosiy oqim boshidanoq STREAM_TIMEOUT bilan ochiladi"
+
+
+def test_vtm_client_set_timeout_applies_to_the_open_socket():
+    from cloudcam.sources.cloud.vtm.protocol import VtmStreamClient
+
+    class Sock:
+        def __init__(self):
+            self.t = []
+
+        def settimeout(self, t):
+            self.t.append(t)
+
+        def close(self):
+            pass
+
+    sk = Sock()
+    c = VtmStreamClient("ysproto://h:8554/live?x=1", timeout=6.0,
+                        socket_factory=lambda addr, t: sk)
+    c.connect()
+    c.set_timeout(20.0)
+    assert sk.t == [6.0, 20.0] and c.timeout == 20.0

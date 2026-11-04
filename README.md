@@ -522,10 +522,11 @@ not been exercised on a live account yet.
   concurrent-stream limit. Each camera uses two processes.
 - `cloudcam keys` requires an account that allows 2FA elevation. Shared devices and
   sub-accounts may not return codes; enter those with `cloudcam code`.
-- With `cloudcam serve`, when the main stream and the substream of the same channel are
-  both open and one of them closes, the cloud pauses the other one for about 9 s, and
-  occasionally ends it (it is then reopened). Keep both open (Frigate's detect and record
-  roles do) or use `--no-substream`.
+- On some NVRs (measured on a DS-7608NI-Q1; not on a DS-7732NXI-K4(E)), when the main
+  stream and the substream of the same channel are both open and one of them closes,
+  the other one freezes for about 9 s and then catches up; viewers stay connected.
+  Other channels are not affected. Keeping both open (Frigate's detect and record roles
+  do) or `--no-substream` avoids it.
 - If `cloudcam serve` is killed instead of stopped with Ctrl+C, its MediaMTX process keeps
   running.
 - The CLI messages are in English or Uzbek (`CLOUDCAM_LANG=uz`); many source comments

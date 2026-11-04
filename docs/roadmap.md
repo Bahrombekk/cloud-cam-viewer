@@ -146,9 +146,11 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
   server without transcoding, arrival-time timestamps, connect timeout.
 - [x] **0.4, step 2 — `cloudcam serve`**: MediaMTX config with an on-demand main and
   `/sub` path per camera; verified with MediaMTX 1.20.0 and a live camera.
-- [ ] **Sibling sessions** (P1): closing one cloud session of a channel pauses the other
-  (~9 s, measured) or ends it. Options: keep a lingering session open longer, close
-  sessions in a way the cloud does not propagate, or reopen the survivor proactively.
+- [x] **Sibling sessions** (0.4): the stream that "ended" was ours (probe timeout kept
+  for the session); fixed. What remains is device behaviour: on some NVRs (DS-7608NI-Q1)
+  closing one session of a channel freezes the other ~9-10 s, independent of token and
+  close method (graceful / RST); other channels and DS-7732NXI-K4(E) are not affected.
+  Viewers stay connected (readTimeout 30 s, session timeout 20 s).
 - [ ] **`cloudcam serve` killed hard** (P2): MediaMTX keeps running; use a Windows job
   object / POSIX process group so the whole tree stops.
 - [ ] ISUP paths in `cloudcam serve` (MediaMTX `source: rtsp://` to the bridge).

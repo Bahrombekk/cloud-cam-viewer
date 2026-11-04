@@ -38,6 +38,16 @@ minor versions; such changes are always listed here.
   re-read after the lock is taken, so waiting processes adopt the new session. Measured
   in tests: 8 concurrent 401s -> 1 refresh, 0 rejected (7 rejected without the lock);
   6 processes starting on a stale session -> 1 refresh (6 without).
+- **`/sub` streams dropping under `cloudcam serve`.** In `auto` mode the substream is
+  opened with a 6 s probe timeout, and that timeout stayed for the whole session. Some
+  NVRs (measured on a DS-7608NI-Q1) freeze the other stream of a channel for about 10 s
+  when one of its sessions closes, so the substream's read timed out, the proxy closed
+  and the RTSP path was torn down and reopened (about 25 s). The session now switches to
+  the normal 20 s timeout once the probe succeeds. Verified on the live camera: the
+  substream freezes for ~9 s and continues on the same connection. Other channels of the
+  NVR are not affected (measured: 0.33 s maximum gap).
+- `cloudcam stream` shows ffmpeg's last error line whenever its ffmpeg exits, not only
+  when no frame was ever published.
 
 ### Changed
 - `cloudcam stream` gives its proxy a free port (many run side by side under `serve`) and

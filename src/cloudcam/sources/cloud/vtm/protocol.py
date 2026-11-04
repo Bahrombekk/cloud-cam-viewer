@@ -138,6 +138,12 @@ class VtmStreamClient:
         self._socket = sock
         return self
 
+    def set_timeout(self, timeout: float | None) -> None:
+        """Ochiq socket'ning o'qish timeout'ini almashtiradi (keyingi recv'lardan)."""
+        self.timeout = timeout
+        if self._socket is not None:
+            self._socket.settimeout(timeout)
+
     def close(self) -> None:
         sock = self._socket
         self._socket = None
