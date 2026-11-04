@@ -60,6 +60,17 @@ class PacedWriter:
         t = b0 & 0x1F
         return 1 <= t <= 5, t == 5
 
+    def _starts_au(self, b0: int) -> bool:
+        """VCL'dan KEYIN kelsa yangi kadrni boshlaydigan non-VCL NAL
+        (AUD / param-set / prefix SEI). Ular keyingi kadrga — ko'pincha kalit
+        kadrga — tegishli: avval oldingi P-kadrga yopishib, navbat to'lganda
+        kalit kadrdan oldin tashlanib ketardi (dekoder param-setsiz IDR oladi)."""
+        if self._hevc:
+            t = (b0 >> 1) & 0x3F
+            return t in (32, 33, 34, 35, 39) or 41 <= t <= 44
+        t = b0 & 0x1F
+        return t in (6, 7, 8, 9) or 14 <= t <= 18
+
     def start(self):
         self._th.start()
         return self
@@ -80,7 +91,7 @@ class PacedWriter:
                 vcl, key = self._nal_kind(data[hdr], data[hdr + 1] if hdr + 1 < len(data) else 0)
                 # Yangi VCL NAL — oldingi kadr tugadi (bir kadr = bir slice deb
                 # hisoblaymiz; ko'p slice bo'lsa chuqurlik qaytarmasi tuzatadi).
-                if vcl and self._cur_has_vcl:
+                if self._cur_has_vcl and (vcl or self._starts_au(data[hdr])):
                     start = i - 1 if i > 0 and data[i - 1] == 0 else i
                     self._cur += data[pos:start]
                     self._flush_frame()
@@ -107,8 +118,8 @@ class PacedWriter:
         with self._lock:
             self._q.append((data, frame, key))
             self._bytes += len(data)
-            if frame:
-                self._rx.append(time.monotonic())
+            if frame and self._paced:      # faqat `_step` o'qiydi (passthrough'da
+                self._rx.append(time.monotonic())   # cheksiz o'sib ketardi)
             # To'lib ketdi — KEYINGI KALIT KADRGACHA butun kadrlarni tashlaymiz
             # (o'rtadan kesish dekoderga buzuq GOP beradi; bu esa toza sakrash).
             if self._bytes > self.MAX_BYTES:
