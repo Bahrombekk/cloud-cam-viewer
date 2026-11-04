@@ -50,6 +50,9 @@ minor versions; such changes are always listed here.
   `display_width x display_height` and shrinking the result: with 23 cameras the grid
   was about 6400x3600 pixels per refresh and the labels were unreadable. Closing the
   window now exits the viewer.
+- `ROADMAP.md` moved to [docs/roadmap.md](docs/roadmap.md) and was rewritten: items
+  re-checked against the code, completed work moved to a Done section, findings of
+  the 2026-11-04 review added, and line-number references replaced by function names.
 - **BREAKING — package layout.** The code moved to a `src/` layout and is split into
   layers that may only import downwards (`core < codec < media < sources < app`),
   enforced by `tests/test_layout.py`. `decrypt_proxy.py` (1290 lines, six jobs) is now

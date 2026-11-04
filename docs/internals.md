@@ -118,7 +118,7 @@ cloud-cam-viewer/
 │   │   ├── fsutil.py          #   0600 atomic writes for secrets
 │   │   ├── identity.py        #   per-install terminal id (featureCode)
 │   │   ├── ipc.py             #   parent <-> camera-process contract (env, flag files)
-│   │   └── paths.py           #   where per-account cache files live
+│   │   └── paths.py           #   data/cache dirs, legacy-file migration
 │   ├── codec/                 # bytes in, bytes out: no sockets, no HTTP, no cloud
 │   │   ├── nal.py             #   NAL AES decryption + encryption-variant detection
 │   │   ├── rtp.py             #   RTP depacketising (H.264/HEVC, FU/AP, seq tracking)
@@ -131,6 +131,7 @@ cloud-cam-viewer/
 │       └── cloud/             #   EZVIZ / Hik-Connect cloud
 │           ├── client.py      #     login, session reuse, verification-code fetch
 │           ├── keys.py        #     verification-code store + cloud fetch (2FA)
+│           ├── codecheck.py   #     verify a code on the live stream (`cloudcam code check`)
 │           ├── devices.py     #     camera list (device + NVR channel)
 │           ├── stream.py      #     open a VTM stream for one camera
 │           ├── proxy.py       #     per-camera decrypting HTTP proxy (subprocess)
@@ -138,13 +139,14 @@ cloud-cam-viewer/
 │           ├── rest.py        #     status, disks, events, records, PTZ
 │           ├── push.py        #     MQTT push events
 │           └── vtm/           #     stream transport, adapted from pyezvizapi (Apache-2.0)
-├── scripts/                   # app.py (grid), single.py, set_code.py, check_code.py
+├── scripts/                   # thin wrappers: app.py (pick + grid), single.py, check/set_code.py
 ├── tests/                     # pytest (cloud is faked — no account needed)
-├── docs/                      # this file and other long-form docs
+├── docs/                      # this file, roadmap.md (internal analysis)
 ├── config.example.py          # settings template (copy to config.py)
 ├── cam_keys.example.json      # verification-code file format
 └── README.md · CHANGELOG.md · CONTRIBUTING.md · SECURITY.md · LICENSE
 ```
 
-> Run the scripts from the project root (`python scripts/app.py`, `python scripts/check_code.py ...`)
-> so they find `config.py`.
+> The scripts find `config.py` in the working directory or the project root, so
+> `python scripts/app.py` works from either. Sessions, codes and caches live in the
+> per-user data directory unless `config.py` says otherwise (see the README).
