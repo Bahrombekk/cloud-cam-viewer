@@ -136,6 +136,13 @@ Save a single frame without opening a window:
 cloudcam snapshot AB2345678 --channel 2 --out yard.jpg
 ```
 
+Republish a camera to an RTSP server you already run (MediaMTX, go2rtc), so that
+Frigate, VLC or Home Assistant can read it. The video is copied, not re-encoded:
+
+```bash
+cloudcam stream AB2345678 --channel 2 --rtsp rtsp://127.0.0.1:8554/cam/AB2345678_2
+```
+
 ## Configuration
 
 Settings are resolved in this order, highest priority first:
@@ -272,6 +279,7 @@ Global options, placed before the command: `--email`, `--password`,
 | `cloudcam code set SERIAL CODE [SERIAL CODE ...]` | Store codes without verifying |
 | `cloudcam snapshot SERIAL [--channel N] [--key CODE] [--out FILE] [--quality Q] [--timeout S]` | Save one JPEG frame (default `<SERIAL>_ch<N>.jpg`, quality 85, timeout 15 s) |
 | `cloudcam view` | Grid viewer with every camera on the account |
+| `cloudcam stream SERIAL --rtsp URL [--channel N] [--stream main\|sub\|auto] [--key CODE]` | Publish one camera to an RTSP server (MediaMTX, go2rtc, ...) without transcoding, until Ctrl+C |
 | `cloudcam status [SERIAL ...]` | Online state, disks, encryption and privacy mode; exits with 1 if a device is offline or a disk is not OK |
 | `cloudcam events [SERIAL ...] [--limit N] [--save-images DIR]` | Recent events (default 20), optionally saving decrypted pictures |
 | `cloudcam events --watch [--save-images DIR]` | Live push events until Ctrl+C (`events` extra) |
@@ -334,6 +342,7 @@ with CloudCam(email="you@example.com", password="...", platform="hikconnect") as
 | `records(serial, channel=1, start=None, end=None)` | `[Record(start, end, type)]`, default last 24 h |
 | `ptz(serial, command, *, channel=1, speed=5, duration=0.5)` | Moves for `duration` seconds, then stops |
 | `push(on_event)` | Context manager delivering `Event` objects (`events` extra) |
+| `publish(serial, target, channel=1, *, key=None, stream_mode=None)` | Publishes the camera to the RTSP URL `target` without transcoding; returns a `Stream` whose `status()` reports progress (`frame()` is always `None`) |
 | `start_token_refresh()` | Keeps the session fresh in a background thread |
 | `isup`, `isup_cameras()`, `open_isup(device_id, channel=1, *, sub=False)` | ISUP bridge client, cameras and streams |
 | `close()` | Stops all streams and background work |
@@ -474,7 +483,8 @@ Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.m
 
 ## Roadmap
 
-- **v0.4, `cloudcam serve`**: every camera as a local RTSP / WebRTC stream through
+- **v0.4, `cloudcam serve`** (in progress; `cloudcam stream` is the first part): every
+  camera as a local RTSP / WebRTC stream through
   go2rtc / MediaMTX, with one upstream cloud session shared by any number of viewers,
   usable as a source in Frigate or Home Assistant. Includes a Docker image.
 - **v0.5, benchmarks**: reproducible first-frame p50/p95, recovery after network loss,

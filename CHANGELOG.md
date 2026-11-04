@@ -8,6 +8,21 @@ minor versions; such changes are always listed here.
 
 ## [Unreleased]
 
+### Added
+- `cloudcam stream SERIAL --rtsp URL` and `CloudCam.publish()` publish a camera to an
+  RTSP server (MediaMTX, go2rtc, ...) without transcoding, reconnecting like the
+  viewer does. The decrypting proxy emits raw Annex-B without timestamps, so packets are
+  stamped with their arrival time; the proxy's jitter buffer already delivers whole
+  frames at the camera's rate (an end-to-end test checks 12 fps in, 12 fps out). The
+  first step of `cloudcam serve` (0.4).
+- The RTSP connection gets a 5 s socket timeout on ffmpeg 5 and newer: without it an
+  unreachable server left ffmpeg hanging silently for 30 s and more. ffmpeg errors are
+  shown as the stream error.
+
+### Changed
+- `CameraStream` reads ffmpeg output through `_consume()` / `_mark_frames()`, so other
+  outputs can reuse the reconnect, flag and watchdog logic.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added

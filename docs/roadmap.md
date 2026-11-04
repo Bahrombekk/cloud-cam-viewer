@@ -145,7 +145,14 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
 
 ## 9. Features
 
-- [ ] **0.4 — `cloudcam serve`.** Every camera as a local RTSP / WebRTC stream through
+- [x] **0.4, step 1 — `cloudcam stream` / `CloudCam.publish()`**: one camera to an RTSP
+  server without transcoding, arrival-time timestamps, connect timeout.
+- [ ] **0.4, step 2 — `cloudcam serve`**: MediaMTX config with an on-demand path per
+  camera (`runOnDemand` -> `cloudcam stream`, start timeout above the 7-10 s cloud
+  first frame), main and `/sub` paths, ISUP paths as RTSP sources.
+- [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), Frigate and Home
+  Assistant examples.
+- [ ] **0.4 — `cloudcam serve` (overall).** Every camera as a local RTSP / WebRTC stream through
   MediaMTX or go2rtc, with one upstream cloud session per camera shared by any number
   of viewers (fan-out in the media layer, never one cloud stream per viewer). Usable
   as a Frigate or Home Assistant source; Docker image.

@@ -236,6 +236,13 @@ class CloudCam:
         Bulut 2FA talab qilsa jimgina "AUTO" ga qaytamiz — oqimni ochish
         to'xtab qolmasligi kerak; kodni `fetch_keys()` bilan ataylab oling.
         """
+        key = self._key_for(serial, key, auto_key)
+        cs = self._mgr.add(serial, channel=channel, decrypt=decrypt,
+                           width=width, height=height, key=key)
+        return Stream(cs)
+
+    def _key_for(self, serial: str, key: Optional[str], auto_key: bool) -> str:
+        """Kod: berilgani -> `cam_keys.json` -> (ruxsat bo'lsa) bulutdan -> "AUTO"."""
         if key is None:
             key = load_cam_keys(self.settings.camkey_file).get(serial)
         if key is None and auto_key and not self._key_fetch_blocked:
@@ -249,11 +256,25 @@ class CloudCam:
                     self._key_fetch_blocked = True
             except Exception:
                 key = None
-        if key is None:
-            key = "AUTO"
-        cs = self._mgr.add(serial, channel=channel, decrypt=decrypt,
-                           width=width, height=height, key=key)
-        return Stream(cs)
+        return key or "AUTO"
+
+    def publish(self, serial: str, target: str, channel: int = 1, *,
+                key: Optional[str] = None, stream_mode: Optional[str] = None,
+                auto_key: bool = True) -> Stream:
+        """Kamerani RTSP serverga (MediaMTX, go2rtc, ...) TRANSKODSIZ publish qiladi.
+
+        `target` — masalan `rtsp://127.0.0.1:8554/cam/AB1234567_1`. Fon thread'da
+        ishlaydi va uzilsa qayta ulanadi; `Stream.status()` holatni beradi,
+        `frame()` doim None (kadr dekodlanmaydi). `stream_mode` — "main" | "sub" |
+        "auto"; berilmasa sozlamadagisi ([[cloudcam.publisher]])."""
+        key = self._key_for(serial, key, auto_key)
+        s = self.settings
+        if stream_mode is not None:
+            if stream_mode not in ("main", "sub", "auto"):
+                raise ValueError(f"stream_mode must be main, sub or auto, got {stream_mode!r}")
+            s = s.replace(stream_mode=stream_mode, substream=False)
+        pub = self._mgr.publish(serial, channel, target, key=key, settings=s)
+        return Stream(pub)
 
     # ── holat, hodisalar, yozuvlar, PTZ ([[cloudcam.sources.cloud.rest]]) ─────
     def status(self, serials=None) -> dict:

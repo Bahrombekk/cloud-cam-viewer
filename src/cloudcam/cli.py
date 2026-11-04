@@ -5,6 +5,7 @@
     cloudcam keys                    # tasdiqlash kodlarini bulutdan olish
     cloudcam code check <SERIAL> KOD  # kodni jonli oqimda tekshirish (code set — saqlash)
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
+    cloudcam stream <SERIAL> --rtsp URL  # kamerani RTSP serverga publish (transkodsiz)
     cloudcam status                  # qurilmalar: onlayn, disklar, shifrlash
     cloudcam events [--watch]        # hodisalar (--watch: jonli push, cloudcam[events])
     cloudcam records <SERIAL>        # qurilmadagi (SD/NVR) yozuvlar
@@ -88,6 +89,48 @@ def cmd_snapshot(args) -> int:
         with open(out, "wb") as f:
             f.write(data)
         print(t(f"Saved: {out} ({len(data)} bytes)", f"Saqlandi: {out} ({len(data)} bayt)"))
+    finally:
+        cam.close()
+    return 0
+
+
+def _stream_line(st: dict) -> str:
+    if st.get("connected"):
+        return t(f"live  {st['fps']} fps  reconnects {st['reconnects']}",
+                 f"jonli  {st['fps']} fps  qayta ulanish {st['reconnects']}")
+    if st.get("error"):
+        return t(f"not live: {st['error']}", f"jonli emas: {st['error']}")
+    return t("connecting...", "ulanmoqda...")
+
+
+def cmd_stream(args) -> int:
+    """Bitta kamerani RTSP serverga transkodsiz publish qiladi (Ctrl+C gacha)."""
+    import time as _time
+    from cloudcam.publisher import check_target, redact_url
+
+    try:
+        check_target(args.rtsp)
+    except ValueError as e:
+        sys.exit(str(e))
+    cam = _cam(args)
+    try:
+        cam.start_token_refresh()             # uzoq ishlaydi — sessiya eskirmasin
+        stream = cam.publish(args.serial, args.rtsp, channel=args.channel, key=args.key,
+                             stream_mode=args.stream)
+        print(t(f"Publishing {args.serial} ch{args.channel} to {redact_url(args.rtsp)} "
+                f"(Ctrl+C to stop)",
+                f"{args.serial} ch{args.channel} -> {redact_url(args.rtsp)} "
+                f"(to'xtatish: Ctrl+C)"), flush=True)
+        last = None
+        try:
+            while True:
+                line = _stream_line(stream.status())
+                if line != last:
+                    print(f"[{_time.strftime('%H:%M:%S')}] {line}", flush=True)
+                    last = line
+                _time.sleep(1)
+        except KeyboardInterrupt:
+            pass
     finally:
         cam.close()
     return 0
@@ -406,6 +449,22 @@ def main(argv=None) -> int:
     sp.add_argument("--quality", type=int, default=85)
     sp.add_argument("--timeout", type=float, default=15.0)
     sp.set_defaults(fn=cmd_snapshot)
+
+    stp_ = sub.add_parser("stream", help=t("publish one camera to an RTSP server "
+                                         "(no transcoding)",
+                                         "bitta kamerani RTSP serverga publish qilish "
+                                         "(transkodsiz)"))
+    stp_.add_argument("serial")
+    stp_.add_argument("--rtsp", required=True, metavar="URL",
+                      help=t("target, e.g. rtsp://127.0.0.1:8554/cam/AB1234567_1",
+                             "manzil, masalan rtsp://127.0.0.1:8554/cam/AB1234567_1"))
+    stp_.add_argument("--channel", type=int, default=1)
+    stp_.add_argument("--key", default=None, help=t("verification code (default: cam_keys.json)",
+                                                   "shifr kodi (bo'lmasa cam_keys.json)"))
+    stp_.add_argument("--stream", choices=["main", "sub", "auto"], default=None,
+                      help=t("cloud stream to request (default: stream_mode setting)",
+                             "bulutdan qaysi oqim (standart: stream_mode sozlamasi)"))
+    stp_.set_defaults(fn=cmd_stream)
 
     kp = sub.add_parser("keys", help=t("fetch verification codes from the cloud",
                                       "tasdiqlash kodlarini bulutdan olish"))
