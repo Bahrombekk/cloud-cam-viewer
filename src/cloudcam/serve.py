@@ -194,8 +194,11 @@ def run_mediamtx(binary: str, config_path: str, env: dict) -> int:
     """MediaMTX'ni ishga tushirib, tugashini kutadi (Ctrl+C — to'xtatadi).
 
     On-demand `cloudcam stream` jarayonlarini MediaMTX o'zi boshqaradi va
-    to'xtaganda yopadi; ularning proxy'lari ota jarayon o'lsa o'zi chiqadi."""
-    proc = subprocess.Popen([binary, config_path], env=env)
+    to'xtaganda yopadi; ularning proxy'lari ota jarayon o'lsa o'zi chiqadi.
+    `cloudcam serve` MAJBURAN o'ldirilsa ham MediaMTX va uning oqimlari ortda
+    qolmaydi ([[cloudcam.core.procutil.popen_bound]])."""
+    from cloudcam.core.procutil import popen_bound
+    proc = popen_bound([binary, config_path], env=env)
     try:
         return proc.wait()
     except KeyboardInterrupt:

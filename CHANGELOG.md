@@ -48,6 +48,12 @@ minor versions; such changes are always listed here.
   NVR are not affected (measured: 0.33 s maximum gap).
 - `cloudcam stream` shows ffmpeg's last error line whenever its ffmpeg exits, not only
   when no frame was ever published.
+- **`cloudcam serve` killed hard** (task manager, `kill -9`, `Stop-Process -Force`) left
+  MediaMTX and its on-demand streams running, holding ports and cloud sessions. MediaMTX
+  is now bound to its parent: on Windows through a job object that kills the whole tree
+  when `serve` dies, on Linux through `PR_SET_PDEATHSIG` (MediaMTX then stops its
+  streams itself). Verified on Windows: killing `serve` stops the Python process,
+  MediaMTX and the on-demand ffmpeg within 3 s. macOS keeps the old behaviour.
 
 ### Changed
 - `cloudcam stream` gives its proxy a free port (many run side by side under `serve`) and

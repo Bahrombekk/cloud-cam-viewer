@@ -527,8 +527,8 @@ not been exercised on a live account yet.
   the other one freezes for about 9 s and then catches up; viewers stay connected.
   Other channels are not affected. Keeping both open (Frigate's detect and record roles
   do) or `--no-substream` avoids it.
-- If `cloudcam serve` is killed instead of stopped with Ctrl+C, its MediaMTX process keeps
-  running.
+- On macOS, if `cloudcam serve` is killed instead of stopped with Ctrl+C, its MediaMTX
+  process keeps running (on Windows and Linux it is stopped together with its streams).
 - The CLI messages are in English or Uzbek (`CLOUDCAM_LANG=uz`); many source comments
   are still in Uzbek.
 

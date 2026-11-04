@@ -151,8 +151,8 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
   closing one session of a channel freezes the other ~9-10 s, independent of token and
   close method (graceful / RST); other channels and DS-7732NXI-K4(E) are not affected.
   Viewers stay connected (readTimeout 30 s, session timeout 20 s).
-- [ ] **`cloudcam serve` killed hard** (P2): MediaMTX keeps running; use a Windows job
-  object / POSIX process group so the whole tree stops.
+- [x] **`cloudcam serve` killed hard** (0.4): `core.procutil.popen_bound` (Windows job
+  object, Linux PDEATHSIG). macOS has neither; a watcher process would be needed there.
 - [ ] ISUP paths in `cloudcam serve` (MediaMTX `source: rtsp://` to the bridge).
 - [ ] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), `cloudcam serve
   --install-mediamtx` (official release for the platform, checksum verified), Frigate and
