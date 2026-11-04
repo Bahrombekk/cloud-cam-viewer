@@ -1,6 +1,7 @@
 """cloudcam buyruq qatori interfeysi.
 
     cloudcam cameras                 # kameralar ro'yxati
+    cloudcam cameras --check         # ... va har kanal haqiqatan ishlaydimi
     cloudcam keys                    # tasdiqlash kodlarini bulutdan olish
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
     cloudcam status                  # qurilmalar: onlayn, disklar, shifrlash
@@ -45,10 +46,21 @@ def cmd_cameras(args) -> int:
     cam = _cam(args)
     try:
         cams = cam.cameras()
+        states = cam.check(cams) if args.check else {}
+        icons = {"ok": "live   ", "nokey": "NO CODE", "offline": "offline", "unknown": "?      "}
         for c in cams:
-            print(f"{c.serial}  ch{c.channel}  {c.name}")
+            st = icons.get(states.get((c.serial, c.channel)), "") if args.check else ""
+            print(f"{c.serial}  ch{c.channel:<3} {st + '  ' if st else ''}{c.name}")
         if not cams:
             print(t("(no cameras found)", "(kamera topilmadi)"))
+        if args.check and cams:
+            n = {k: sum(v == k for v in states.values()) for k in icons}
+            print()
+            print(t(f"live {n['ok']}, no code {n['nokey']}, offline {n['offline']}, "
+                    f"unknown {n['unknown']}",
+                    f"ishlaydi {n['ok']}, kod yo'q {n['nokey']}, oflayn {n['offline']}, "
+                    f"noma'lum {n['unknown']}"))
+            return 1 if n["offline"] or n["nokey"] or n["unknown"] else 0
     finally:
         cam.close()
     return 0
@@ -208,6 +220,8 @@ def cmd_events(args) -> int:
                 if args.save_images and ev.picture_url:
                     _save_event_image(cam, ev, args.save_images)
 
+            # Uzoq ishlaydi — sessiya eskirmasin (hodisa rasmi, qayta ulanish uchun).
+            cam.start_token_refresh()
             with cam.push(on_event):
                 print(t("Waiting for events (Ctrl+C to stop)...",
                         "Hodisalar kutilmoqda (to'xtatish: Ctrl+C)..."), flush=True)
@@ -279,6 +293,9 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     cp = sub.add_parser("cameras", help=t("list cameras", "kameralar ro'yxati"))
+    cp.add_argument("--check", action="store_true",
+                    help=t("check each channel live (offline / missing code)",
+                           "har kanalni jonli tekshirish (oflayn / kod yo'q)"))
     cp.set_defaults(fn=cmd_cameras)
 
     sp = sub.add_parser("snapshot", help=t("save one JPEG snapshot", "bitta JPEG surat saqlash"))

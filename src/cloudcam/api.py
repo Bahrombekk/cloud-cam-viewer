@@ -258,6 +258,22 @@ class CloudCam:
             serials = {c.serial for c in self.cameras()}
         return cloud_api.device_status(self.client, serials)
 
+    def check(self, cameras=None) -> dict:
+        """{(serial, kanal): "ok" | "nokey" | "offline" | "unknown"} — HAQIQIY holat.
+
+        [[status]] qurilma (NVR) darajasida; bu esa har kanalni bulutdan tez
+        so'raydi ([[stream.probe_many]], ffmpeg'siz) va shifrlangan qurilmaning
+        kodi yo'q bo'lsa "nokey" beradi."""
+        from cloudcam.sources.cloud.stream import classify, probe_many
+        cams = list(cameras if cameras is not None else self.cameras())
+        live = probe_many(self.client, [(c.serial, c.channel) for c in cams])
+        try:
+            enc = {s for s, st in self.status({c.serial for c in cams}).items()
+                   if st.encrypted}
+        except Exception:
+            enc = None                    # noma'lum -> onlayn kanallar "unknown"
+        return classify(live, enc, load_cam_keys(self.settings.camkey_file))
+
     def events(self, serials=None, *, limit: int = 20, cursor: str = ""):
         """Oxirgi hodisalar (harakat, odam, ...): (hodisalar, keyingi_kursor)."""
         from cloudcam.sources.cloud import rest as cloud_api

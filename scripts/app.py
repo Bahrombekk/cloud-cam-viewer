@@ -30,32 +30,69 @@ _sys.path[:0] = [_os.getcwd(),
 import config
 
 # token.json / cam_keys.json config.py yonida turadi — qayerdan ishga tushirilsa ham.
-_os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
+if getattr(config, "__file__", None):      # testlarda config — stub modul
+    _os.chdir(_os.path.dirname(_os.path.abspath(config.__file__)))
 import cv2
 import numpy as np
 
-from cloudcam.sources.cloud import devices
+from cloudcam.sources.cloud import devices, rest, vtm_cache
+from cloudcam.sources.cloud.stream import classify, probe_many
 from cloudcam.sources.cloud.client import CloudClient
 from cloudcam.i18n import t
 from cloudcam.stream_manager import StreamManager, load_cam_keys
 
 
-def choose_cameras(items):
-    """items: [(serial, channel, name)] — faqat kamera ulangan kanallar."""
+# Ro'yxatdagi belgi = kanalning HAQIQIY holati ([[check_cameras]]).
+ICONS = {"ok": "🟢", "nokey": "🔒", "offline": "⚫", "unknown": "❔"}
+
+
+def check_cameras(client, items):
+    """{(serial, ch): "ok" | "nokey" | "offline" | "unknown"}.
+
+    Ilgari hamma qator 🟢 edi: qurilma holati NVR darajasida, ya'ni NVR onlayn
+    bo'lsa undagi bo'sh portlar ham "yashil" ko'rinardi. Endi har kanal bulutdan
+    tez so'raladi ([[stream.probe_many]]); shifrlangan qurilmaning kodi yo'q
+    bo'lsa 🔒 — ochilganda baribir "kod yo'q" xatosi chiqardi."""
+    vtm_cache.tag(client, config.TOKEN_FILE)   # pagelist/VTDU hisob keshidan
+    live = probe_many(client, [(s, ch) for s, ch, _ in items])
+    try:
+        enc = {s for s, st in rest.device_status(client, {s for s, _, _ in items}).items()
+               if st.encrypted}
+    except Exception:
+        enc = None                        # noma'lum -> onlayn kanallar ❔
+    return classify(live, enc, load_cam_keys())
+
+
+def choose_cameras(items, states=None):
+    """items: [(serial, channel, name)] — faqat kamera ulangan kanallar.
+    `states` — [[check_cameras]] natijasi (None bo'lsa belgi ko'rsatilmaydi)."""
+    states = states or {}
     print("\n" + "=" * 60)
     print("📷 " + t("CAMERAS", "KAMERALAR RO'YXATI"))
     print("=" * 60)
     for i, (serial, ch, name) in enumerate(items, 1):
-        print(f"  [{i:2}] 🟢 {name}  ({serial} ch{ch})")
+        icon = ICONS.get(states.get((serial, ch)), "  ")
+        print(f"  [{i:2}] {icon} {name}  ({serial} ch{ch})")
     if not items:
         print(t("  (no cameras found)", "  (kamera topilmadi)"))
     print("=" * 60)
+    if states:
+        n = {k: sum(v == k for v in states.values()) for k in ICONS}
+        extra_en = f"   ❔ unknown {n['unknown']}" if n["unknown"] else ""
+        extra_uz = f"   ❔ noma'lum {n['unknown']}" if n["unknown"] else ""
+        print(t(f"🟢 live {n['ok']}   🔒 no code {n['nokey']}   ⚫ offline {n['offline']}"
+                + extra_en,
+                f"🟢 ishlaydi {n['ok']}   🔒 kod yo'q {n['nokey']}   ⚫ oflayn {n['offline']}"
+                + extra_uz))
+        print(t("'live' = only the 🟢 cameras", "'live' — faqat 🟢 kameralar"))
     print(t("Select: comma-separated numbers (e.g. 1,3,5) or 'all'",
             "Tanlash: raqamlarni vergul bilan (masalan: 1,3,5) yoki 'all'"))
     raw = input("➤ " + t("Choice: ", "Tanlov: ")).strip().lower()
 
     if raw == "all":
         return items
+    if raw == "live":
+        return [it for it in items if states.get((it[0], it[1])) == "ok"]
     chosen = []
     for part in raw.replace(" ", "").split(","):
         if part.isdigit():
@@ -127,7 +164,14 @@ def main():
     # Faqat haqiqiy kamera ulangan kanallarni ko'rsatamiz (bo'sh NVR slotlari emas)
     print("📡 " + t("Discovering cameras...", "Kameralar aniqlanmoqda..."))
     cams = devices.list_cameras()
-    chosen = choose_cameras(cams)
+    print("🔎 " + t("Checking which cameras are live...",
+                    "Qaysi kameralar ishlayotgani tekshirilmoqda..."))
+    try:
+        states = check_cameras(client, cams)
+    except Exception as e:                 # tekshiruv ixtiyoriy — ro'yxat baribir chiqadi
+        print("⚠️ " + t(f"Check failed: {e}", f"Tekshirib bo'lmadi: {e}"))
+        states = None
+    chosen = choose_cameras(cams, states)
     if not chosen:
         print("❌ " + t("No camera selected", "Hech qaysi kamera tanlanmadi"))
         return

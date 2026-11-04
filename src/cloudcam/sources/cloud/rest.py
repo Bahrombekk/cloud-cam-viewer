@@ -32,9 +32,52 @@ class CloudApiError(RuntimeError):
     """Bulut so'rovi muvaffaqiyatsiz (meta.code / resultCode)."""
 
 
+def _call(client, method: str, path: str, **kw) -> dict:
+    """So'rov + javobni tekshirish. Sessiya eskirgan (401) bo'lsa refresh token
+    bilan BIR MARTA yangilab qayta yuboradi — parol/MFA so'ramaydi. Ilgari
+    `cloudcam status` uzoq ishlagan viewer yonida 401 bilan yiqilardi."""
+    url = f"https://{client.api_url}{path}"
+    send = getattr(client.session, method)
+    resp = send(url, timeout=HTTP_TIMEOUT, **kw)
+    if _is_unauthorized(resp) and _refresh(client):
+        resp = send(url, timeout=HTTP_TIMEOUT, **kw)
+    return _check(resp, path)
+
+
+def _refresh(client) -> bool:
+    """Sessiyani parolsiz yangilaydi va DARHOL `token.json` ga yozadi
+    ([[CloudClient.refresh_and_save]]: boshqa jarayon allaqachon yangilagan
+    bo'lsa o'shani oladi). Bulut refresh token'ni har safar ALMASHTIRADI —
+    yozilmasa faylda o'lik token qolib, keyingi ishga tushirish to'liq login
+    (CAPTCHA/2FA) qilardi. Yangilash imkoni yo'q bo'lsa (soxta klient) — False.
+    Refresh token rad etilsa (`SessionExpired`) — tushunarli `CloudApiError`."""
+    from cloudcam.sources.cloud.client import SessionExpired
+    try:
+        fn = getattr(client, "refresh_and_save", None)
+        if fn is not None:
+            fn()
+            return True
+        fn = getattr(client, "refresh_session", None)
+        if fn is None:
+            return False
+        fn(allow_login=False)
+        return True
+    except SessionExpired as err:
+        raise CloudApiError(f"Session expired, log in again: {err}") from err
+
+
 def _get(client, path: str, **params) -> dict:
-    return _check(client.session.get(f"https://{client.api_url}{path}",
-                                     params=params, timeout=HTTP_TIMEOUT), path)
+    return _call(client, "get", path, params=params)
+
+
+def _is_unauthorized(resp) -> bool:
+    if getattr(resp, "status_code", 200) == 401:
+        return True
+    try:
+        data = resp.json()
+    except ValueError:
+        return False
+    return isinstance(data, dict) and str((data.get("meta") or {}).get("code")) == "401"
 
 
 def _check(resp, path: str) -> dict:
@@ -361,14 +404,13 @@ def ptz(client, serial: str, command: str, action: str, *, channel: int = 1,
     if not 1 <= int(speed) <= 7:
         raise ValueError("PTZ speed must be 1..7")
     path = f"/v3/devices/{serial}/ptzControl"
-    _check(client.session.put(f"https://{client.api_url}{path}", data={
+    _call(client, "put", path, data={
         "command": command, "action": action, "channelNo": int(channel),
         "speed": int(speed), "uuid": str(uuid.uuid4()), "serial": serial,
-    }, timeout=HTTP_TIMEOUT), path)
+    })
 
 
 def capture(client, serial: str, channel: int = 1) -> dict:
     """Kameraga kadr olishni buyuradi (natija bulut hodisalarida paydo bo'ladi)."""
     path = f"/v3/devconfig/v1/{serial}/{channel}/capture"
-    return _check(client.session.put(f"https://{client.api_url}{path}",
-                                     timeout=HTTP_TIMEOUT), path)
+    return _call(client, "put", path)

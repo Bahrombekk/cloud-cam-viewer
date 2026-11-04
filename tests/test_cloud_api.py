@@ -176,3 +176,48 @@ def test_ptz_validates_and_passes_the_channel():
     for bad in (("JUMP", "START", 5), ("LEFT", "GO", 5), ("LEFT", "START", 9)):
         with pytest.raises(ValueError):
             ca.ptz(c, "S1", bad[0], bad[1], speed=bad[2])
+
+
+def test_expired_session_is_refreshed_once_and_retried():
+    refreshed = []
+    c = Client(Resp({"meta": {"code": 401}}),
+               Resp({"meta": OK, "statusInfos": {"S1": NVR_STATUS}}))
+    # refresh_and_save — parolsiz yangilaydi VA token.json ga yozadi
+    c.refresh_and_save = lambda path=None: refreshed.append("saved")
+    assert ca.device_status(c, ["S1"])["S1"].online is True
+    assert refreshed == ["saved"]
+    assert len(c.session.calls) == 2
+
+
+def test_rejected_refresh_token_becomes_cloud_error():
+    from cloudcam.sources.cloud.client import SessionExpired
+
+    def expired(path=None):
+        raise SessionExpired("refresh token expired")
+
+    c = Client(Resp({"meta": {"code": 401}}))
+    c.refresh_and_save = expired
+    with pytest.raises(ca.CloudApiError, match="log in again"):
+        ca.device_status(c, ["S1"])
+
+
+def test_client_without_refresh_raises_the_401():
+    with pytest.raises(ca.CloudApiError, match="401"):
+        ca.device_status(Client(Resp({"meta": {"code": 401}})), ["S1"])
+
+
+def test_old_style_client_refresh_session_still_used():
+    refreshed = []
+    c = Client(Resp({"meta": {"code": 401}}),
+               Resp({"meta": OK, "statusInfos": {"S1": NVR_STATUS}}))
+    c.refresh_session = lambda allow_login=True: refreshed.append(allow_login)
+    assert ca.device_status(c, ["S1"])["S1"].online is True
+    assert refreshed == [False], "parol bilan login qilmasligi kerak"
+    assert len(c.session.calls) == 2
+
+
+def test_still_unauthorized_after_refresh_raises():
+    c = Client(Resp({"meta": {"code": 401}}), Resp({"meta": {"code": 401}}))
+    c.refresh_session = lambda allow_login=True: True
+    with pytest.raises(ca.CloudApiError, match="401"):
+        ca.device_status(c, ["S1"])
