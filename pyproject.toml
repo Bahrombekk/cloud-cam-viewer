@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "cloudcam"
 dynamic = ["version"]
 description = "Watch and decrypt EZVIZ / Hik-Connect cloud cameras and Hikvision ISUP 5.0 devices from Python (H.264/H.265, encrypted streams)"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT AND Apache-2.0"   # Apache-2.0: pyezvizapi'dan moslashtirilgan kod
+license-files = ["LICENSE", "NOTICE", "src/cloudcam/sources/cloud/vtm/LICENSE-pyezvizapi"]
 requires-python = ">=3.10"
 keywords = ["ezviz", "hik-connect", "hikvision", "isup", "cctv", "rtsp", "camera", "hevc", "decrypt", "home-assistant", "frigate"]
 authors = [{ name = "Bahrombek" }]
@@ -19,7 +20,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
     "Topic :: Multimedia :: Video",
     "Operating System :: OS Independent",
 ]

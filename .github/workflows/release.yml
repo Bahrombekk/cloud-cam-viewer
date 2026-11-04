@@ -29,7 +29,8 @@ jobs:
       - name: Release notes from CHANGELOG.md
         run: |
           v="${GITHUB_REF_NAME#v}"
-          awk -v v="$v" '$0 ~ "^## \[" v "\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > notes.md
+          # index(): regex emas — gawk'da "\[" oddiy "[" ga aylanib, sarlavha topilmasdi.
+          awk -v v="$v" 'index($0, "## [" v "]") == 1 {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > notes.md
           test -s notes.md || echo "See CHANGELOG.md" > notes.md
 
       - name: Create GitHub Release

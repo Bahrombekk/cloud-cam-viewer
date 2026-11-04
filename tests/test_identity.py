@@ -41,7 +41,7 @@ def test_hardcoded_shared_code_is_gone_from_the_source():
                f"tests/{Path(__file__).name}"}
     offenders = [p.relative_to(ROOT).as_posix()
                  for p in ROOT.rglob("*.py")
-                 if "venv" not in p.parts and ".claude" not in p.parts
+                 if not {"venv", ".venv", ".claude", "build", "dist"} & set(p.parts)
                  and p.relative_to(ROOT).as_posix() not in allowed
                  and OLD_HARDCODED in p.read_text(encoding="utf-8")]
     assert not offenders, f"umumiy featureCode qolgan: {offenders}"

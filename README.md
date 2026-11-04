@@ -382,11 +382,13 @@ Security issues: please report privately, see [SECURITY.md](SECURITY.md).
 
 This is an independent, unofficial project. Use it only with cameras and accounts you
 own or are authorized to access. The authors are not affiliated with EZVIZ or Hikvision.
-The cloud stream transport (`src/cloudcam/sources/cloud/vtm/`) is adapted from
+The cloud stream transport (`src/cloudcam/sources/cloud/vtm/`), the REST client
+(`rest.py`) and push events (`push.py`) are adapted from
 [`pyezvizapi`](https://github.com/RenierM26/pyEzvizApi) 1.0.5.0 by Renier Moorcroft,
-Apache License 2.0, see [`LICENSE-pyezvizapi`](src/cloudcam/sources/cloud/vtm/LICENSE-pyezvizapi).
+Apache License 2.0; see [NOTICE](NOTICE) and
+[`LICENSE-pyezvizapi`](src/cloudcam/sources/cloud/vtm/LICENSE-pyezvizapi).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). `src/cloudcam/sources/cloud/vtm/` contains code adapted from `pyezvizapi`
-under the Apache License 2.0 (notice and full text in that directory).
+MIT, see [LICENSE](LICENSE). Some files are adapted from `pyezvizapi` under the
+Apache License 2.0; [NOTICE](NOTICE) lists them.
