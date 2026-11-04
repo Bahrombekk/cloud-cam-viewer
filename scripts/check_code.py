@@ -10,7 +10,6 @@ Ishga tushirish:
     python scripts/check_code.py <SERIAL> <KOD> all   # NVR ning hamma (1-4) kanalini tekshiradi
 """
 
-import json
 import logging
 import os
 import sys
@@ -39,6 +38,7 @@ if getattr(config, "__file__", None):
 from cloudcam.codec.nal import HEVC_VIDEO_PT
 from cloudcam.codec.ps import PsStreamDecryptor
 from cloudcam.codec.rtp import H264RtpDecryptor, HevcRtpDecryptor, detect_rtp_codec
+from cloudcam.sources.cloud import keys as _keys
 from cloudcam.sources.cloud import stream as cloud_stream
 from cloudcam.sources.cloud.stream import open_cloud_stream
 from cloudcam.i18n import t
@@ -103,16 +103,18 @@ def check(client, serial, code, channel=1, timeout=30):
 
 
 def save_code(serial, code):
-    keys = {}
-    if os.path.exists(config.CAMKEY_FILE):
-        try:
-            with open(config.CAMKEY_FILE) as f:
-                keys = json.load(f)
-        except Exception:
-            pass
+    """Kutubxona orqali: 0600, atomar ([[cloudcam.sources.cloud.keys]]).
+
+    Registr SAQLANADI (keys.set_code katta harfga o'tkazadi — bu yerda kod
+    allaqachon oqimda tekshirilgan). Fayl bor-u o'qilmasa YOZMAYMIZ: avval
+    bitta kod bilan qayta yozilib, qolgan barcha kodlar o'chib ketardi."""
+    path = config.CAMKEY_FILE
+    keys = _keys.load(path)
+    if not keys and os.path.exists(path) and os.path.getsize(path) > 0:
+        raise SystemExit(t(f"{path} is unreadable - not overwriting it",
+                           f"{path} o'qilmadi — ustidan yozilmaydi"))
     keys[serial] = code
-    with open(config.CAMKEY_FILE, "w") as f:
-        json.dump(keys, f, indent=2)
+    _keys.save(keys, path)
 
 
 def report(serial, code, channel, result):

@@ -38,6 +38,7 @@ import qilinadi va tushunarli xato beradi.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -48,6 +49,19 @@ from cloudcam.i18n import t
 DEFAULT_URL = "http://127.0.0.1:8091"
 DEFAULT_RTSP_BASE = "rtsp://127.0.0.1:8554"
 DEFAULT_TIMEOUT = 5.0
+
+
+_TOKEN_RE = re.compile(r"[\x21-\x7e]{1,64}")   # bosiladigan ASCII, bo'sh joysiz
+
+
+def _token(value, what: str) -> str:
+    """Ko'prik protokoli qatorga asoslangan: bo'sh joy yoki yangi qator bo'lgan
+    qiymat (qurilma o'zi yuboradigan ID ham) qo'shimcha buyruq qatori — masalan
+    `default on` — qo'shib yuborardi."""
+    s = str(value)
+    if not _TOKEN_RE.fullmatch(s):
+        raise IsupError(t(f"Invalid {what}: {s[:20]!r}", f"Yaroqsiz {what}: {s[:20]!r}"))
+    return s
 
 
 class IsupError(RuntimeError):
@@ -205,11 +219,11 @@ class IsupBridge:
         """
         lines = []
         for dev, key in sorted((keys or {}).items()):
-            lines.append(f"dev {dev} {key}")
+            lines.append(f"dev {_token(dev, 'device id')} {_token(key, 'key')}")
         for dev in sorted(set(blocked)):
-            lines.append(f"block {dev}")
+            lines.append(f"block {_token(dev, 'device id')}")
         for pref, key in sorted((prefixes or {}).items()):
-            lines.append(f"prefix {pref} {key}")
+            lines.append(f"prefix {_token(pref, 'prefix')} {_token(key, 'key')}")
         lines.append(f"default {'on' if default else 'off'}")
         res = self._call("PUT", "/keys", "\n".join(lines) + "\n")
         if res.get("bad"):
@@ -241,7 +255,7 @@ class IsupBridge:
         return self._flush_want()
 
     def _flush_want(self) -> dict:
-        lines = [f"{dev} {ch} {1 if sub else 0}"
+        lines = [f"{_token(dev, 'device id')} {int(ch)} {1 if sub else 0}"
                  for (dev, ch), sub in sorted(self._wanted.items())]
         return self._call("PUT", "/want", "\n".join(lines) + "\n")
 

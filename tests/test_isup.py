@@ -301,3 +301,16 @@ def test_an_isup_stream_never_starts_the_decrypt_proxy(monkeypatch):
     cs.running = True
     cs._reader_loop()
     assert started == [], "ISUP oqimi uchun proxy ishga tushdi"
+
+
+def test_bridge_lines_cannot_be_injected():
+    """Qurilma o'zi yuboradigan ID ham ishonchsiz: bo'sh joy yoki yangi qator
+    `default on` kabi qo'shimcha buyruq qatori qo'shardi."""
+    import pytest
+
+    from cloudcam.sources.isup import IsupError, _token
+    assert _token("AA1234567", "device id") == "AA1234567"
+    assert _token("k3y@#!", "key") == "k3y@#!"
+    for bad in ("x\ndefault on", "a b", "", "x" * 65):
+        with pytest.raises(IsupError):
+            _token(bad, "device id")
