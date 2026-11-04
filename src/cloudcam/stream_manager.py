@@ -283,7 +283,6 @@ class CameraStream:
 
     def _reader_loop(self):
         """24/7 loop — har qanday uzilishda qayta ulanadi, cheksiz."""
-        frame_size = self.width * self.height * 3
         backoff = 1  # qayta ulanish kechikishi (sekund)
 
         while self.running:
@@ -303,40 +302,16 @@ class CameraStream:
 
                 # 2. FFmpeg ishga tushirish
                 self.ffmpeg_proc = subprocess.Popen(
-                    self._ffmpeg_cmd(),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    bufsize=frame_size * 4,
-                )
+                    self._ffmpeg_cmd(), **self._ffmpeg_popen_kwargs())
                 self._ffmpeg_started = time.time()  # watchdog shu vaqtdan sanaydi
                 # backoff bu yerda EMAS, birinchi kadrdan keyin tiklanadi: Popen
                 # doim muvaffaqiyatli, shuning uchun doimiy xatoda kamera har
                 # 1-2 s da qayta urinib, bulutga cheksiz so'rov yuborardi.
-                frames_this_attempt = 0
 
-                # 3. Frame o'qish
-                while self.running:
-                    raw = self.ffmpeg_proc.stdout.read(frame_size)
-                    if not raw or len(raw) < frame_size:
-                        break  # uzildi
-                    frames_this_attempt += 1
-
-                    frame = np.frombuffer(raw, dtype=np.uint8).reshape(
-                        (self.height, self.width, 3)).copy()
-
-                    with self._lock:
-                        self.latest_frame = frame
-                        self.connected = True
-                        self.last_frame_time = time.time()
-
-                    # FPS hisoblash
-                    self._frame_counter += 1
-                    now = time.time()
-                    if now - self._fps_time >= 1.0:
-                        self.fps = self._frame_counter / (now - self._fps_time)
-                        self._frame_counter = 0
-                        self._fps_time = now
+                # 3. ffmpeg natijasini o'qish (ffmpeg chiqqanda yoki to'xtatilganda
+                #    qaytadi). Bu klassda — xom kadrlar; [[RtspPublisher]] da —
+                #    progress qatorlari.
+                frames_this_attempt = self._consume(self.ffmpeg_proc)
 
                 # Shifr kodi xato bo'lsa — proxy bayroq qo'ygan bo'ladi
                 if os.path.exists(self._keyerr_path()):
@@ -419,6 +394,39 @@ class CameraStream:
                 self.reconnect_count += 1
                 time.sleep(min(backoff, 30))
                 backoff = min(backoff * 2, 30)
+
+    def _ffmpeg_popen_kwargs(self) -> dict:
+        frame_size = self.width * self.height * 3
+        return dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, bufsize=frame_size * 4)
+
+    def _consume(self, proc) -> int:
+        """ffmpeg stdout'idan xom BGR kadrlarni o'qiydi. Qaytaradi: kadrlar soni."""
+        frame_size = self.width * self.height * 3
+        n = 0
+        while self.running:
+            raw = proc.stdout.read(frame_size)
+            if not raw or len(raw) < frame_size:
+                break  # uzildi
+            n += 1
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape(
+                (self.height, self.width, 3)).copy()
+            with self._lock:
+                self.latest_frame = frame
+            self._mark_frames(1)
+        return n
+
+    def _mark_frames(self, n: int) -> None:
+        """`n` ta yangi kadr keldi: ulangan, oxirgi kadr vaqti, FPS."""
+        now = time.time()
+        with self._lock:
+            self.connected = True
+            self.last_frame_time = now
+        self._frame_counter += n
+        if now - self._fps_time >= 1.0:
+            self.fps = self._frame_counter / (now - self._fps_time)
+            self._frame_counter = 0
+            self._fps_time = now
 
     def _watchdog_loop(self):
         """Qotgan oqimni aniqlaydi: ffmpeg ishlayapti-yu, FREEZE_TIMEOUT dan
@@ -504,6 +512,24 @@ class StreamManager:
         stream.start()
         return stream
 
+    def publish(self, serial, channel, target, *, decrypt=True, key=None, url=None,
+                settings=None, port=None):
+        """Kamerani RTSP serverga transkodsiz publish qiladi ([[RtspPublisher]]).
+
+        Bir xil (serial, kanal, manzil) ikkinchi marta so'ralsa mavjudi qaytadi."""
+        from cloudcam.publisher import RtspPublisher
+        skey = ("publish", serial, channel, target)
+        if skey in self.streams:
+            return self.streams[skey]
+        if port is None:
+            port = self._next_port
+            self._next_port += 1
+        pub = RtspPublisher(serial, channel, port, target, decrypt=decrypt,
+                            key=key, url=url, settings=settings or self.settings)
+        self.streams[skey] = pub
+        pub.start()
+        return pub
+
     def remove(self, serial, channel=1):
         skey = (serial, channel)
         if skey in self.streams:
@@ -556,17 +582,19 @@ class StreamManager:
     def _refresh_and_save(self, path):
         """Avval parolsiz (boshqa jarayon yangilagan bo'lsa — o'shani olib),
         bulut refresh tokenni rad etsagina parol bilan qayta kiradi."""
+        from cloudcam.core.fsutil import file_lock
         from cloudcam.sources.cloud.client import SessionExpired
-        again = getattr(self.client, "refresh_and_save", None)
-        if again is None:                       # eski/soxta mijoz
-            self.client.refresh_session()
-            self.client.save_token(path)
-            return
-        try:
-            again(path)
-        except SessionExpired:
-            self.client.login()
-            self.client.save_token(path)
+        with file_lock(path):                   # boshqa jarayonlar bilan bittalab
+            again = getattr(self.client, "refresh_and_save", None)
+            if again is None:                   # eski/soxta mijoz
+                self.client.refresh_session()
+                self.client.save_token(path)
+                return
+            try:
+                again(path)
+            except SessionExpired:
+                self.client.login()
+                self.client.save_token(path)
 
     def stop_all(self):
         self._running = False

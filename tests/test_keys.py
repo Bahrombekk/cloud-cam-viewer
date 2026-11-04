@@ -146,3 +146,10 @@ def test_non_object_store_is_also_refused():
     assert keys.load() == {}
     with pytest.raises(keys.KeysFileError):
         keys.set_code("CC333", "XYZXYZ")
+
+
+def test_set_code_keeps_case():
+    """Ilovada o'zgartirilgan kod kichik harfli bo'lishi mumkin — kod AES kalit,
+    katta harfga o'girilsa oqim ochilmaydi (jonli: 10 kamera "kod xato")."""
+    assert keys.set_code("EE555", " 1q2w3e4rTY ")["EE555"] == "1q2w3e4rTY"
+    assert keys.load()["EE555"] == "1q2w3e4rTY"

@@ -179,8 +179,10 @@ class CloudCam:
         from cloudcam.core import paths
         self.migrated = paths.migrate_legacy(self.settings)
         if force:
-            self.client.login()
-            self.client.save_token(self.settings.token_file)
+            from cloudcam.core.fsutil import file_lock
+            with file_lock(self.settings.token_file):
+                self.client.login()
+                self.client.save_token(self.settings.token_file)
             self.auth_mode = "login"
         else:
             self.auth_mode = self.client.connect(self.settings.token_file)
@@ -189,8 +191,10 @@ class CloudCam:
         return self
 
     def refresh_token(self) -> None:
-        self.client.refresh_session()
-        self.client.save_token(self.settings.token_file)
+        from cloudcam.core.fsutil import file_lock
+        with file_lock(self.settings.token_file):
+            self.client.refresh_session()
+            self.client.save_token(self.settings.token_file)
 
     # ── tasdiqlash kodlari ───────────────────────────────────────────
     def fetch_keys(self, serials=None, *, mfa_code=None, overwrite=False):
@@ -236,6 +240,29 @@ class CloudCam:
         Bulut 2FA talab qilsa jimgina "AUTO" ga qaytamiz — oqimni ochish
         to'xtab qolmasligi kerak; kodni `fetch_keys()` bilan ataylab oling.
         """
+        key = self._key_for(serial, key, auto_key)
+        cs = self._mgr.add(serial, channel=channel, decrypt=decrypt,
+                           width=width, height=height, key=key)
+        return Stream(cs)
+
+    def open_rtsp(self, url: str, name: Optional[str] = None, *,
+                  width: Optional[int] = None, height: Optional[int] = None) -> Stream:
+        """Oddiy RTSP kamerani ochadi — bulut, login va kod kerak emas.
+
+        `url` — `rtsp://user:pass@host:554/...` yoki saqlangan kamera nomi
+        (`cloudcam rtsp add`). Kadrlar bulut kameralaridagi kabi `Stream` orqali."""
+        if not url.lower().startswith("rtsp://"):
+            from cloudcam.sources.rtsp import store
+            found = {c.name: c for c in store.load(self.settings.rtsp_file)}.get(url)
+            if found is None:
+                raise ValueError(f"no saved RTSP camera named {url!r} (cloudcam rtsp list)")
+            name, url = name or found.name, found.url
+        cs = self._mgr.add(f"rtsp:{name or url}", channel=0, width=width, height=height,
+                           url=url)
+        return Stream(cs)
+
+    def _key_for(self, serial: str, key: Optional[str], auto_key: bool) -> str:
+        """Kod: berilgani -> `cam_keys.json` -> (ruxsat bo'lsa) bulutdan -> "AUTO"."""
         if key is None:
             key = load_cam_keys(self.settings.camkey_file).get(serial)
         if key is None and auto_key and not self._key_fetch_blocked:
@@ -249,11 +276,27 @@ class CloudCam:
                     self._key_fetch_blocked = True
             except Exception:
                 key = None
-        if key is None:
-            key = "AUTO"
-        cs = self._mgr.add(serial, channel=channel, decrypt=decrypt,
-                           width=width, height=height, key=key)
-        return Stream(cs)
+        return key or "AUTO"
+
+    def publish(self, serial: str, target: str, channel: int = 1, *,
+                key: Optional[str] = None, stream_mode: Optional[str] = None,
+                auto_key: bool = True, proxy_port: Optional[int] = None) -> Stream:
+        """Kamerani RTSP serverga (MediaMTX, go2rtc, ...) TRANSKODSIZ publish qiladi.
+
+        `target` — masalan `rtsp://127.0.0.1:8554/cam/AB1234567_1`. Fon thread'da
+        ishlaydi va uzilsa qayta ulanadi; `Stream.status()` holatni beradi,
+        `frame()` doim None (kadr dekodlanmaydi). `stream_mode` — "main" | "sub" |
+        "auto"; berilmasa sozlamadagisi ([[cloudcam.publisher]]). `proxy_port=0` —
+        dekodlovchi proxy uchun OS bergan bo'sh port."""
+        key = self._key_for(serial, key, auto_key)
+        s = self.settings
+        if stream_mode is not None:
+            if stream_mode not in ("main", "sub", "auto"):
+                raise ValueError(f"stream_mode must be main, sub or auto, got {stream_mode!r}")
+            s = s.replace(stream_mode=stream_mode, substream=False)
+        pub = self._mgr.publish(serial, channel, target, key=key, settings=s,
+                                port=proxy_port)
+        return Stream(pub)
 
     # ── holat, hodisalar, yozuvlar, PTZ ([[cloudcam.sources.cloud.rest]]) ─────
     def status(self, serials=None) -> dict:

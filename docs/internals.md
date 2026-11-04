@@ -141,8 +141,9 @@ cloud-cam-viewer/
 │           └── vtm/           #     stream transport, adapted from pyezvizapi (Apache-2.0)
 ├── scripts/                   # thin wrappers: app.py (pick + grid), single.py, check/set_code.py
 ├── isup-bridge/               # C++ ISUP 5.0 -> RTSP bridge (needs Hikvision's SDK, not included)
+├── docker/                    # image (cloudcam + ffmpeg + MediaMTX) and compose file
 ├── tests/                     # pytest (cloud is faked — no account needed)
-├── docs/                      # this file, roadmap.md (internal analysis)
+├── docs/                      # this file, docker.md, integrations.md, roadmap.md
 ├── config.example.py          # settings template (copy to config.py)
 ├── cam_keys.example.json      # verification-code file format
 └── README.md · CHANGELOG.md · CONTRIBUTING.md · SECURITY.md · LICENSE

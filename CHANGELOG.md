@@ -8,6 +8,95 @@ minor versions; such changes are always listed here.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-04
+
+### Added
+- **Plain RTSP cameras and NVRs** (`cloudcam.sources.rtsp`), next to the cloud ones:
+  - `cloudcam rtsp probe rtsp://...` checks a camera stage by stage (network, RTSP,
+    credentials, stream up to SETUP) and says which one failed; Basic and Digest auth
+    (with and without `qop`); codec, size, fps and audio from the SDP (size from the SPS
+    when the camera does not state it); finds the substream.
+  - `cloudcam rtsp scan HOST --user --pass [--save NAME]` detects the vendor
+    (Hikvision, Dahua/Amcrest, Uniview, Reolink, Axis, Holowits) and lists every channel
+    that really streams; channels an NVR advertises but refuses at SETUP are skipped.
+  - `cloudcam rtsp add|list|remove`: saved in `<data dir>/rtsp_cameras.json` (0600, the
+    URLs hold passwords); `list` hides the passwords.
+  - Saved RTSP cameras appear in `cloudcam serve` (pulled by MediaMTX on demand, no
+    proxy process; `rtsp/<name>` and `rtsp/<name>/sub`), in `cloudcam view` and in
+    `cloudcam snapshot NAME|rtsp://...`; `CloudCam.open_rtsp()` in the API. Without a
+    cloud account (or with `--no-cloud`) `serve` and `view` show only the RTSP cameras.
+  - Adapted from kamera-xarita (same author, MIT), where this code vets ~155 production
+    cameras. Faster first frame (ONVIF keyframe request) and automatic TCP/UDP choice
+    follow in 0.5.
+- `cloudcam stream SERIAL --rtsp URL` and `CloudCam.publish()` publish a camera to an
+  RTSP server (MediaMTX, go2rtc, ...) without transcoding, reconnecting like the
+  viewer does. The decrypting proxy emits raw Annex-B without timestamps, so packets are
+  stamped with their arrival time; the proxy's jitter buffer already delivers whole
+  frames at the camera's rate (an end-to-end test checks 12 fps in, 12 fps out). The
+  first step of `cloudcam serve` (0.4).
+- The RTSP connection gets a 5 s socket timeout on ffmpeg 5 and newer: without it an
+  unreachable server left ffmpeg hanging silently for 30 s and more. ffmpeg errors are
+  shown as the stream error.
+
+- **`cloudcam serve`**: every camera as an on-demand RTSP / WebRTC / HLS stream through
+  MediaMTX (1.9+), main and `/sub` path per camera, one cloud stream shared by all viewers
+  and closed 30 s after the last one. Safe defaults: localhost only (UDP too), publishing
+  only from this host, optional read credentials, unknown paths rejected, RTMP/SRT/MoQ
+  off, 25 s start timeout, 30 s read timeout. MediaMTX is found on PATH or in
+  `<data dir>/bin/`; the version is detected so version-specific keys are only written
+  where MediaMTX knows them. Verified end to end with MediaMTX 1.20.0 and a live camera.
+- **Docker image** (`docker/Dockerfile`, `docker/docker-compose.yml`, [docs/docker.md](docs/docker.md)):
+  cloudcam, ffmpeg and MediaMTX (installed with the checksum-verified installer for the
+  build platform) running `cloudcam serve` as a non-root user, data in a `/data` volume,
+  ports published on 127.0.0.1 by default. `.dockerignore` is an allow-list, so secrets in
+  the checkout never reach the image. Verified with a live camera through the container
+  (12 fps, median frame gap 0.082 s).
+- Frigate and Home Assistant examples: [docs/integrations.md](docs/integrations.md).
+- `cloudcam serve --install-mediamtx [--mediamtx-version X.Y.Z]` installs the official
+  MediaMTX build for this platform (Windows/Linux amd64, Linux arm64/armv7/armv6,
+  macOS amd64/arm64) into `<data dir>/bin/`: downloaded over HTTPS from the GitHub
+  release, SHA-256 checked against its `checksums.sha256`, only the binary and licence
+  taken from the archive, verified with `--version` before replacing an existing copy.
+  The binary is not stored in the repository.
+- Account commands work with only a saved session; without a password no login is
+  attempted (`LoginRequired`) instead of sending an empty password.
+
+### Fixed
+- `keys.set_code()` (used by the RTSP store helpers and the library) upper-cased the
+  verification code. The code is the AES key and is case-sensitive; a code changed in the
+  app ("1q2w...") was stored wrongly and the camera reported "wrong code" (10 cameras on
+  a live account). It is now stored exactly as given, like `cloudcam code set`.
+- **Concurrent session refresh.** Processes sharing `token.json` (viewer, CLI, the
+  `cloudcam stream` processes under `serve`) could refresh at the same time; the refresh
+  token rotates, so all but one sent a stale token, were rejected and fell back to a full
+  login (CAPTCHA / new-device 2FA risk). Refresh and login now run under a cross-process
+  lock (`<token file>.lock`, `fcntl` / `msvcrt`, no new dependency), and the token file is
+  re-read after the lock is taken, so waiting processes adopt the new session. Measured
+  in tests: 8 concurrent 401s -> 1 refresh, 0 rejected (7 rejected without the lock);
+  6 processes starting on a stale session -> 1 refresh (6 without).
+- **`/sub` streams dropping under `cloudcam serve`.** In `auto` mode the substream is
+  opened with a 6 s probe timeout, and that timeout stayed for the whole session. Some
+  NVRs (measured on a DS-7608NI-Q1) freeze the other stream of a channel for about 10 s
+  when one of its sessions closes, so the substream's read timed out, the proxy closed
+  and the RTSP path was torn down and reopened (about 25 s). The session now switches to
+  the normal 20 s timeout once the probe succeeds. Verified on the live camera: the
+  substream freezes for ~9 s and continues on the same connection. Other channels of the
+  NVR are not affected (measured: 0.33 s maximum gap).
+- `cloudcam stream` shows ffmpeg's last error line whenever its ffmpeg exits, not only
+  when no frame was ever published.
+- **`cloudcam serve` killed hard** (task manager, `kill -9`, `Stop-Process -Force`) left
+  MediaMTX and its on-demand streams running, holding ports and cloud sessions. MediaMTX
+  is now bound to its parent: on Windows through a job object that kills the whole tree
+  when `serve` dies, on Linux through `PR_SET_PDEATHSIG` (MediaMTX then stops its
+  streams itself). Verified on Windows: killing `serve` stops the Python process,
+  MediaMTX and the on-demand ffmpeg within 3 s. macOS keeps the old behaviour.
+
+### Changed
+- `cloudcam stream` gives its proxy a free port (many run side by side under `serve`) and
+  has `--no-refresh` (the session is refreshed by the parent).
+- `CameraStream` reads ffmpeg output through `_consume()` / `_mark_frames()`, so other
+  outputs can reuse the reconnect, flag and watchdog logic.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added
@@ -188,6 +277,7 @@ First tagged version. Summarises everything since the initial commit.
   `0600` permissions; the verification code reaches child processes through the
   environment, never the command line.
 
-[Unreleased]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Bahrombekk/cloud-cam-viewer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Bahrombekk/cloud-cam-viewer/releases/tag/v0.2.0

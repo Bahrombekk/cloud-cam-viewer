@@ -5,11 +5,16 @@
     cloudcam keys                    # tasdiqlash kodlarini bulutdan olish
     cloudcam code check <SERIAL> KOD  # kodni jonli oqimda tekshirish (code set — saqlash)
     cloudcam snapshot <SERIAL>       # bitta surat saqlash (JPEG)
+    cloudcam stream <SERIAL> --rtsp URL  # kamerani RTSP serverga publish (transkodsiz)
+    cloudcam serve                   # har kamera — lokal RTSP/WebRTC/HLS (MediaMTX)
     cloudcam status                  # qurilmalar: onlayn, disklar, shifrlash
     cloudcam events [--watch]        # hodisalar (--watch: jonli push, cloudcam[events])
     cloudcam records <SERIAL>        # qurilmadagi (SD/NVR) yozuvlar
     cloudcam ptz <SERIAL> LEFT       # PTZ kamerani burish
     cloudcam view                    # OpenCV grid ko'ruvchi (viewer kerak)
+    cloudcam rtsp probe rtsp://...   # oddiy RTSP kamerani bosqichma-bosqich tekshirish
+    cloudcam rtsp scan 192.168.1.10 --user admin --pass ... --save nvr  # NVR kanallari
+    cloudcam rtsp add NOM rtsp://... # saqlash: serve'da bulut kameralari bilan birga
 
 Hisob ma'lumotlari: --email/--password, yoki CLOUDCAM_EMAIL/PASSWORD
 muhit o'zgaruvchilari, yoki eski config.py.
@@ -25,6 +30,16 @@ from cloudcam.i18n import t
 from cloudcam.settings import Settings
 
 
+def _has_account(args) -> bool:
+    """Bulut hisobi bormi: email+parol yoki saqlangan sessiya (login qilinmaydi)."""
+    s = Settings.resolve()
+    if (args.email or s.email) and (args.password or s.password):
+        return True
+    from cloudcam.sources.cloud.client import CloudClient
+    platform = args.platform or s.platform
+    return bool(CloudClient(None, None, platform=platform).load_token(s.token_file))
+
+
 def _cam(args) -> CloudCam:
     s = Settings.resolve()
     if args.email:
@@ -34,12 +49,19 @@ def _cam(args) -> CloudCam:
     if args.platform:
         s = s.replace(platform=args.platform)
     if not s.email or not s.password:
-        sys.exit(t("Account required: --email/--password or "
-                   "CLOUDCAM_EMAIL/CLOUDCAM_PASSWORD (or config.py).",
-                   "Hisob kerak: --email/--password yoki CLOUDCAM_EMAIL/PASSWORD "
-                   "(yoki config.py)."))
+        # Saqlangan sessiya bo'lsa parol shart emas — u faqat yangi login uchun kerak.
+        from cloudcam.sources.cloud.client import CloudClient
+        if not CloudClient(None, None, platform=s.platform).load_token(s.token_file):
+            sys.exit(t("Account required: --email/--password or "
+                       "CLOUDCAM_EMAIL/CLOUDCAM_PASSWORD (or config.py).",
+                       "Hisob kerak: --email/--password yoki CLOUDCAM_EMAIL/PASSWORD "
+                       "(yoki config.py)."))
+    from cloudcam.sources.cloud.client import LoginRequired
     cam = CloudCam(settings=s)
-    cam.login()
+    try:
+        cam.login()
+    except LoginRequired as e:
+        sys.exit(str(e))
     if cam.migrated:
         import os
         where = os.path.dirname(s.token_file)
@@ -74,10 +96,23 @@ def cmd_cameras(args) -> int:
     return 0
 
 
+def _rtsp_target(target: str):
+    """`rtsp://...` yoki saqlangan RTSP kamera nomi bo'lsa — RtspCamera, aks holda None."""
+    from cloudcam.sources.rtsp import store
+    if target.lower().startswith("rtsp://"):
+        return store.RtspCamera("", target)
+    return {c.name: c for c in store.load()}.get(target)
+
+
 def cmd_snapshot(args) -> int:
-    cam = _cam(args)
+    rc = _rtsp_target(args.serial)
+    cam = CloudCam(settings=Settings.resolve()) if rc else _cam(args)
     try:
-        stream = cam.open(args.serial, channel=args.channel, key=args.key)
+        if rc:
+            stream = cam.open_rtsp(rc.url, rc.name or None)
+            args.serial = rc.name or "rtsp"
+        else:
+            stream = cam.open(args.serial, channel=args.channel, key=args.key)
         if not stream.wait_first_frame(timeout=args.timeout):
             sys.exit(t("No frame (timeout). Is the camera online and the key correct?",
                        "Kadr kelmadi (timeout). Kamera online/kalit to'g'rimi?"))
@@ -91,6 +126,146 @@ def cmd_snapshot(args) -> int:
     finally:
         cam.close()
     return 0
+
+
+def _stream_line(st: dict) -> str:
+    if st.get("connected"):
+        return t(f"live  {st['fps']} fps  reconnects {st['reconnects']}",
+                 f"jonli  {st['fps']} fps  qayta ulanish {st['reconnects']}")
+    if st.get("error"):
+        return t(f"not live: {st['error']}", f"jonli emas: {st['error']}")
+    return t("connecting...", "ulanmoqda...")
+
+
+def cmd_stream(args) -> int:
+    """Bitta kamerani RTSP serverga transkodsiz publish qiladi (Ctrl+C gacha)."""
+    import time as _time
+    from cloudcam.publisher import check_target, redact_url
+
+    try:
+        check_target(args.rtsp)
+    except ValueError as e:
+        sys.exit(str(e))
+    cam = _cam(args)
+    try:
+        if not args.no_refresh:
+            # Uzoq ishlaydi — sessiya eskirmasin. `cloudcam serve` ostida sessiyani
+            # ota jarayon yangilaydi: o'nlab oqim bir vaqtda refresh qilsa, aylanuvchi
+            # refresh token bir-birini bekor qilardi.
+            cam.start_token_refresh()
+        # Bitta kamera — proxy uchun OS bergan bo'sh port (serve ostida ko'p jarayon).
+        stream = cam.publish(args.serial, args.rtsp, channel=args.channel, key=args.key,
+                             stream_mode=args.stream, proxy_port=0)
+        print(t(f"Publishing {args.serial} ch{args.channel} to {redact_url(args.rtsp)} "
+                f"(Ctrl+C to stop)",
+                f"{args.serial} ch{args.channel} -> {redact_url(args.rtsp)} "
+                f"(to'xtatish: Ctrl+C)"), flush=True)
+        last = None
+        try:
+            while True:
+                line = _stream_line(stream.status())
+                if line != last:
+                    print(f"[{_time.strftime('%H:%M:%S')}] {line}", flush=True)
+                    last = line
+                _time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+    finally:
+        cam.close()
+    return 0
+
+
+def cmd_serve(args) -> int:
+    """Har kamera — lokal RTSP/WebRTC/HLS manzil (MediaMTX, talab bo'yicha ochiladi)."""
+    import json
+    import os
+    import socket
+    from cloudcam import serve
+    from cloudcam.settings import data_dir
+
+    if bool(args.read_user) != bool(args.read_pass):
+        sys.exit(t("--read-user and --read-pass go together",
+                   "--read-user va --read-pass birga beriladi"))
+    if args.install_mediamtx:
+        # Hisob kerak emas — login'dan OLDIN.
+        from cloudcam import mtx_install
+        try:
+            args.mediamtx = mtx_install.install(args.mediamtx_version
+                                                or mtx_install.DEFAULT_VERSION)
+        except mtx_install.InstallError as e:
+            sys.exit(str(e))
+    exposed = args.listen not in ("127.0.0.1", "localhost", "::1")
+    if exposed and not args.read_user:
+        print(t("Warning: the streams are readable by anyone who can reach this host; "
+                "consider --read-user/--read-pass.",
+                "Diqqat: oqimlarni bu kompyuterga yeta oladigan har kim ko'radi; "
+                "--read-user/--read-pass ni ko'rib chiqing."), file=sys.stderr)
+    from cloudcam.sources.rtsp import store as rtsp_store
+    rtsp_cams = rtsp_store.load()
+    # Bulut hisobi yo'q, lekin RTSP kameralar bor — faqat ular bilan ishlaymiz.
+    use_cloud = not args.no_cloud and (_has_account(args) or not rtsp_cams)
+    cam = _cam(args) if use_cloud else None
+    try:
+        cams = cam.cameras() if cam else []
+        if not cams and not rtsp_cams:
+            sys.exit(t("No cameras found.", "Kamera topilmadi."))
+        binary = serve.find_mediamtx(args.mediamtx)
+        version = serve.mediamtx_version(binary) if binary else None
+        if version is not None and version < serve.MTX_MIN_VERSION:
+            sys.exit(t(f"MediaMTX {serve.version_str(version)} is too old; "
+                       f"{serve.version_str(serve.MTX_MIN_VERSION)} or newer is required",
+                       f"MediaMTX {serve.version_str(version)} juda eski; "
+                       f"{serve.version_str(serve.MTX_MIN_VERSION)} yoki yangisi kerak"))
+        config = serve.build_config(
+            cams, listen=args.listen, rtsp_port=args.rtsp_port, hls_port=args.hls_port,
+            webrtc_port=args.webrtc_port, rtp_port=args.rtp_port,
+            webrtc_udp_port=args.webrtc_udp_port, substream=not args.no_substream,
+            read_user=args.read_user, read_pass=args.read_pass, mtx_version=version,
+            rtsp_cameras=rtsp_cams)
+        if args.print_config:
+            print(json.dumps(config, indent=2))
+            return 0
+        path = os.path.abspath(args.config or os.path.join(data_dir(), "mediamtx.yml"))
+        serve.write_config(config, path)
+
+        host = {"0.0.0.0": socket.gethostname(), "": socket.gethostname(),
+                "::": socket.gethostname()}.get(args.listen, args.listen)
+        for name, rtsp, web in serve.urls(cams, host=host, rtsp_port=args.rtsp_port,
+                                          webrtc_port=args.webrtc_port,
+                                          substream=not args.no_substream,
+                                          rtsp_cameras=rtsp_cams):
+            print(f"{rtsp:<52} {name}")
+        if not args.no_substream:
+            print(t("(append /sub for the substream; WebRTC player: "
+                    f"http://{host}:{args.webrtc_port}/<path>)",
+                    "(/sub qo'shilsa — kichik oqim; WebRTC pleyer: "
+                    f"http://{host}:{args.webrtc_port}/<yo'l>)"))
+
+        if not binary:
+            need = serve.version_str(serve.MTX_MIN_VERSION)
+            print(t(f"MediaMTX (>= {need}) not found. Config written to {path}; install "
+                    f"MediaMTX (or put it in {os.path.join(data_dir(), 'bin')}) and run: "
+                    f"mediamtx \"{path}\"",
+                    f"MediaMTX (>= {need}) topilmadi. Konfiguratsiya {path} ga yozildi; "
+                    f"MediaMTX'ni o'rnating (yoki {os.path.join(data_dir(), 'bin')} ga "
+                    f"qo'ying) va ishga tushiring: mediamtx \"{path}\""), file=sys.stderr)
+            return 1
+
+        # Bola-jarayonlar (`cloudcam stream`) sessiyani shu token faylidan oladi;
+        # parol ularga UZATILMAYDI ([[Settings.child_env]]).
+        settings = cam.settings if cam else Settings.resolve()
+        env = settings.child_env()
+        env["CLOUDCAM_TOKEN_FILE"] = os.path.abspath(settings.token_file)
+        env["CLOUDCAM_CAMKEY_FILE"] = os.path.abspath(settings.camkey_file)
+        if cam:
+            cam.start_token_refresh()
+        total = len(cams) + len(rtsp_cams)
+        print(t(f"Serving {total} cameras with {binary} (Ctrl+C to stop)",
+                f"{total} kamera {binary} orqali (to'xtatish: Ctrl+C)"), flush=True)
+        return serve.run_mediamtx(binary, path, env)
+    finally:
+        if cam:
+            cam.close()
 
 
 def cmd_keys(args) -> int:
@@ -130,8 +305,8 @@ def cmd_keys(args) -> int:
 def _save_code(serial: str, code: str) -> str:
     """Kodni AYNAN berilgandek saqlaydi (registr — AES kalitning bir qismi).
 
-    `keys.set_code` katta harfga o'tkazadi; bu yerda kod oqimda tekshirilgan
-    yoki foydalanuvchi ataylab shunday yozgan. Buzuq fayl ustidan yozilmaydi."""
+    Kod oqimda tekshirilgan yoki foydalanuvchi ataylab shunday yozgan — registri
+    o'zgartirilmaydi (`keys.set_code` kabi). Buzuq fayl ustidan yozilmaydi."""
     from cloudcam.sources.cloud import keys as _keys
     stored = _keys.load(strict=True)
     stored[serial] = code
@@ -377,7 +552,104 @@ def cmd_view(args) -> int:
         sys.exit(t("The viewer needs OpenCV:  pip install cloudcam[viewer]",
                    "Ko'rish uchun OpenCV kerak:  pip install cloudcam[viewer]"))
     from cloudcam import viewer
-    return viewer.run(_cam(args), args)
+    from cloudcam.sources.rtsp import store as rtsp_store
+    rtsp_cams = rtsp_store.load()
+    use_cloud = not args.no_cloud and (_has_account(args) or not rtsp_cams)
+    cam = _cam(args) if use_cloud else CloudCam(settings=Settings.resolve())
+    return viewer.run(cam, args, rtsp_cameras=rtsp_cams, cloud=use_cloud)
+
+
+def cmd_rtsp(args) -> int:
+    """Oddiy RTSP kameralar: tekshirish, NVR kanallarini topish, saqlash."""
+    from cloudcam.sources import rtsp
+    from cloudcam.sources.rtsp import store
+
+    def line(r) -> str:
+        return ("OK   " if r.ok else "FAIL ") + f"[{r.stage}] {r.message}"
+
+    try:
+        if args.rtsp_cmd == "probe":
+            r = rtsp.probe_url(args.url, timeout=args.timeout)
+            print(line(r))
+            if r.ok and not args.no_sub:
+                host, port, path, user, pw = rtsp.split_rtsp_url(args.url)
+                for cand in rtsp.sub_path_candidates(path):
+                    sr = rtsp.probe(host, port, cand, user, pw, timeout=args.timeout)
+                    if sr.ok:
+                        print(t(f"substream: {cand}  ({sr.message})",
+                                f"kichik oqim: {cand}  ({sr.message})"))
+                        break
+            return 0 if r.ok else 1
+
+        if args.rtsp_cmd == "scan":
+            print(t(f"Scanning {args.host}:{args.port} ...",
+                    f"{args.host}:{args.port} tekshirilmoqda ..."), file=sys.stderr)
+            vendor = args.vendor
+            if not vendor:
+                vendor, first = rtsp.detect_vendor(args.host, args.port, args.user,
+                                                   args.pass_, timeout=args.timeout)
+                if not vendor:
+                    print(line(first) if first else t("nothing found", "hech narsa topilmadi"))
+                    return 1
+                print(t(f"vendor: {vendor}", f"ishlab chiqaruvchi: {vendor}"), file=sys.stderr)
+            hits = rtsp.scan(args.host, args.port, args.user, args.pass_, vendor=vendor,
+                             channels=args.channels, timeout=args.timeout)
+            if not hits:
+                print(t("No streaming channels found.", "Oqim beradigan kanal topilmadi."))
+                return 1
+            saved = []
+            for h in hits:
+                print(f"ch{h.channel:<3} {h.path:<45} {h.result.message}"
+                      + (f"  (sub: {h.sub_path})" if h.sub_path else ""))
+                if args.save:
+                    name = f"{args.save}_{h.channel}" if len(hits) > 1 else args.save
+                    url = rtsp.build_rtsp_url(args.host, args.port, h.path, args.user, args.pass_)
+                    sub = (rtsp.build_rtsp_url(args.host, args.port, h.sub_path, args.user,
+                                               args.pass_) if h.sub_path else "")
+                    store.add(name, url, sub)
+                    saved.append(name)
+            if saved:
+                print(t(f"Saved {len(saved)} camera(s): {', '.join(saved)}",
+                        f"{len(saved)} kamera saqlandi: {', '.join(saved)}"))
+            return 0
+
+        if args.rtsp_cmd == "add":
+            if not args.no_check:
+                r = rtsp.probe_url(args.url, timeout=args.timeout)
+                print(line(r))
+                if not r.ok:
+                    print(t("Not saved (use --no-check to save anyway).",
+                            "Saqlanmadi (baribir saqlash uchun --no-check)."), file=sys.stderr)
+                    return 1
+            sub = args.sub_url
+            if sub is None and not args.no_check:
+                host, port, path, user, pw = rtsp.split_rtsp_url(args.url)
+                for cand in rtsp.sub_path_candidates(path):
+                    if rtsp.probe(host, port, cand, user, pw, timeout=args.timeout).ok:
+                        sub = rtsp.build_rtsp_url(host, port, cand, user, pw)
+                        break
+            store.add(args.name, args.url, sub or "")
+            print(t(f"Saved {args.name}", f"{args.name} saqlandi")
+                  + (t(" (with substream)", " (kichik oqim bilan)") if sub else ""))
+            return 0
+
+        if args.rtsp_cmd == "remove":
+            if store.remove(args.name):
+                print(t(f"Removed {args.name}", f"{args.name} o'chirildi"))
+                return 0
+            print(t(f"No camera named {args.name}", f"{args.name} nomli kamera yo'q"))
+            return 1
+
+        cams = store.load(strict=True)                     # list
+        if not cams:
+            print(t("No RTSP cameras saved. Add one: cloudcam rtsp add NAME rtsp://...",
+                    "RTSP kamera saqlanmagan. Qo'shish: cloudcam rtsp add NOM rtsp://..."))
+        for c in cams:
+            print(f"{c.name:<20} {rtsp.redact_url(c.url)}"
+                  + (f"  (sub: {rtsp.redact_url(c.sub_url)})" if c.sub_url else ""))
+        return 0
+    except (ValueError, store.RtspStoreError) as e:
+        sys.exit(str(e))
 
 
 def main(argv=None) -> int:
@@ -398,7 +670,8 @@ def main(argv=None) -> int:
     cp.set_defaults(fn=cmd_cameras)
 
     sp = sub.add_parser("snapshot", help=t("save one JPEG snapshot", "bitta JPEG surat saqlash"))
-    sp.add_argument("serial")
+    sp.add_argument("serial", help=t("cloud serial, rtsp:// URL or a saved RTSP camera name",
+                                     "bulut seriyasi, rtsp:// manzil yoki saqlangan RTSP nomi"))
     sp.add_argument("--channel", type=int, default=1)
     sp.add_argument("--key", default=None, help=t("verification code (default: cam_keys.json)",
                            "shifr kodi (bo'lmasa cam_keys.json)"))
@@ -406,6 +679,70 @@ def main(argv=None) -> int:
     sp.add_argument("--quality", type=int, default=85)
     sp.add_argument("--timeout", type=float, default=15.0)
     sp.set_defaults(fn=cmd_snapshot)
+
+    stp_ = sub.add_parser("stream", help=t("publish one camera to an RTSP server "
+                                         "(no transcoding)",
+                                         "bitta kamerani RTSP serverga publish qilish "
+                                         "(transkodsiz)"))
+    stp_.add_argument("serial")
+    stp_.add_argument("--rtsp", required=True, metavar="URL",
+                      help=t("target, e.g. rtsp://127.0.0.1:8554/cam/AB1234567_1",
+                             "manzil, masalan rtsp://127.0.0.1:8554/cam/AB1234567_1"))
+    stp_.add_argument("--channel", type=int, default=1)
+    stp_.add_argument("--key", default=None, help=t("verification code (default: cam_keys.json)",
+                                                   "shifr kodi (bo'lmasa cam_keys.json)"))
+    stp_.add_argument("--stream", choices=["main", "sub", "auto"], default=None,
+                      help=t("cloud stream to request (default: stream_mode setting)",
+                             "bulutdan qaysi oqim (standart: stream_mode sozlamasi)"))
+    stp_.add_argument("--no-refresh", action="store_true",
+                      help=t("do not refresh the session (cloudcam serve does it)",
+                             "sessiyani yangilamaslik (buni cloudcam serve qiladi)"))
+    stp_.set_defaults(fn=cmd_stream)
+
+    svp = sub.add_parser("serve", help=t("every camera as a local RTSP / WebRTC / HLS "
+                                         "stream (MediaMTX, opened on demand)",
+                                         "har kamera — lokal RTSP / WebRTC / HLS oqim "
+                                         "(MediaMTX, talab bo'yicha)"))
+    svp.add_argument("--listen", default="127.0.0.1",
+                     help=t("address to listen on; 0.0.0.0 for every interface "
+                            "(default 127.0.0.1)",
+                            "tinglanadigan manzil; hamma tarmoq uchun 0.0.0.0 "
+                            "(standart 127.0.0.1)"))
+    svp.add_argument("--rtsp-port", type=int, default=8554)
+    svp.add_argument("--webrtc-port", type=int, default=8889)
+    svp.add_argument("--hls-port", type=int, default=8888)
+    svp.add_argument("--webrtc-udp-port", type=int, default=8189,
+                     help=t("WebRTC media (UDP) port", "WebRTC media (UDP) porti"))
+    svp.add_argument("--rtp-port", type=int, default=8000,
+                     help=t("RTSP over UDP: RTP port (RTCP uses the next one)",
+                            "RTSP UDP: RTP porti (RTCP keyingisini oladi)"))
+    svp.add_argument("--no-cloud", action="store_true",
+                     help=t("serve only the saved RTSP cameras (cloudcam rtsp add)",
+                            "faqat saqlangan RTSP kameralar (cloudcam rtsp add)"))
+    svp.add_argument("--no-substream", action="store_true",
+                     help=t("do not add the /sub paths", "/sub yo'llarini qo'shmaslik"))
+    svp.add_argument("--read-user", default=None)
+    svp.add_argument("--read-pass", default=None,
+                     help=t("require these credentials to read from other hosts",
+                            "boshqa kompyuterlardan o'qish uchun login/parol"))
+    svp.add_argument("--config", default=None, metavar="PATH",
+                     help=t("where to write mediamtx.yml (default: data directory)",
+                            "mediamtx.yml qayerga yozilsin (standart: ma'lumotlar papkasi)"))
+    svp.add_argument("--mediamtx", default=None, metavar="PATH",
+                     help=t("MediaMTX binary (default: from PATH)",
+                            "MediaMTX dasturi (standart: PATH dan)"))
+    svp.add_argument("--install-mediamtx", action="store_true",
+                     help=t("download the official MediaMTX build for this platform "
+                            "(SHA-256 verified) into the data directory first",
+                            "avval shu platformaga mos rasmiy MediaMTX'ni ma'lumotlar "
+                            "papkasiga yuklash (SHA-256 tekshiriladi)"))
+    svp.add_argument("--mediamtx-version", default=None, metavar="X.Y.Z",
+                     help=t("MediaMTX version for --install-mediamtx (default: the tested one)",
+                            "--install-mediamtx uchun versiya (standart: sinalgani)"))
+    svp.add_argument("--print-config", action="store_true",
+                     help=t("print the MediaMTX config and exit",
+                            "MediaMTX konfiguratsiyasini chiqarib, to'xtash"))
+    svp.set_defaults(fn=cmd_serve)
 
     kp = sub.add_parser("keys", help=t("fetch verification codes from the cloud",
                                       "tasdiqlash kodlarini bulutdan olish"))
@@ -483,7 +820,48 @@ def main(argv=None) -> int:
     pp.set_defaults(fn=cmd_ptz)
 
     vp = sub.add_parser("view", help=t("OpenCV grid viewer", "OpenCV grid ko'ruvchi"))
+    vp.add_argument("--no-cloud", action="store_true",
+                    help=t("show only the saved RTSP cameras",
+                           "faqat saqlangan RTSP kameralarni ko'rsatish"))
     vp.set_defaults(fn=cmd_view)
+
+    rtp = sub.add_parser("rtsp", help=t("plain RTSP cameras and NVRs: check, scan, save",
+                                        "oddiy RTSP kamera va NVR: tekshirish, skan, saqlash"))
+    rsub = rtp.add_subparsers(dest="rtsp_cmd")
+    rpr = rsub.add_parser("probe", help=t("check one RTSP URL stage by stage",
+                                          "bitta RTSP manzilni bosqichma-bosqich tekshirish"))
+    rpr.add_argument("url")
+    rpr.add_argument("--no-sub", action="store_true",
+                     help=t("do not look for a substream", "kichik oqimni qidirmaslik"))
+    rsc = rsub.add_parser("scan", help=t("find the channels of an NVR / camera",
+                                         "NVR / kamera kanallarini topish"))
+    rsc.add_argument("host")
+    rsc.add_argument("--port", type=int, default=554)
+    rsc.add_argument("--user", default="")
+    rsc.add_argument("--pass", dest="pass_", default="")
+    rsc.add_argument("--vendor", default="",
+                     choices=["", "hikvision", "dahua", "amcrest", "uniview", "reolink",
+                              "axis", "holowits", "generic"],
+                     help=t("skip detection", "aniqlashni o'tkazib yuborish"))
+    rsc.add_argument("--channels", type=int, default=32)
+    rsc.add_argument("--save", metavar="NAME", default="",
+                     help=t("save every channel found as NAME_<ch>",
+                            "topilgan kanallarni NOM_<kanal> deb saqlash"))
+    rad = rsub.add_parser("add", help=t("save a camera (checked first)",
+                                        "kamerani saqlash (avval tekshiriladi)"))
+    rad.add_argument("name")
+    rad.add_argument("url")
+    rad.add_argument("--sub-url", default=None,
+                     help=t("substream URL (default: detected)",
+                            "kichik oqim manzili (standart: aniqlanadi)"))
+    rad.add_argument("--no-check", action="store_true")
+    rrm = rsub.add_parser("remove", help=t("forget a saved camera", "saqlangan kamerani o'chirish"))
+    rrm.add_argument("name")
+    rsub.add_parser("list", help=t("saved RTSP cameras (passwords hidden)",
+                                   "saqlangan RTSP kameralar (parollar yashirin)"))
+    for sp_ in (rpr, rsc, rad):
+        sp_.add_argument("--timeout", type=float, default=6.0)
+    rtp.set_defaults(fn=cmd_rtsp, rtsp_cmd="list")
 
     args = p.parse_args(argv)
     return args.fn(args)

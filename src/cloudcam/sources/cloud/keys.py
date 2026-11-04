@@ -62,9 +62,15 @@ def save(keys: dict[str, str], path: str | None = None) -> None:
 
 
 def set_code(serial: str, code: str, path: str | None = None) -> dict[str, str]:
-    """Bitta kodni qo'shib, faylni saqlaydi."""
+    """Bitta kodni qo'shib, faylni saqlaydi.
+
+    Kod AES kalit — registrga SEZGIR, AYNAN berilgandek saqlanadi. Ilgari
+    katta harfga o'girilardi: zavod kodi (6 katta harf) uchun bu zararsiz edi,
+    lekin ilovada o'zgartirilgan kod ("1q2w..." kabi) buzilib, jonli hisobda
+    10 kamera "kod xato" bergan. Yorliqdagi kodni kichik harf bilan yozish
+    holatini [[codecheck.check_with_case_fallback]] hal qiladi."""
     keys = load(path, strict=True)
-    keys[serial] = code.strip().upper()
+    keys[serial] = code.strip()
     save(keys, path)
     return keys
 

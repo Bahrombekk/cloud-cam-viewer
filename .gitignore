@@ -50,3 +50,10 @@ isup-bridge/inc/*
 !isup-bridge/inc/.gitkeep
 isup-bridge/.env
 isup-bridge/logs/
+
+# token.json uchun jarayonlararo qulf fayllari
+*.lock
+rtsp_cameras.json
+
+# Docker: hisob ma'lumotlari (parol)
+docker/.env

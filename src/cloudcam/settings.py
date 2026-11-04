@@ -22,7 +22,7 @@ ENV_PREFIX = "CLOUDCAM_"
 HOME_ENV = "CLOUDCAM_HOME"
 # Fayl yo'li bo'lgan maydonlar — nisbiy qiymat JORIY papkaga emas, manbasiga
 # (config.py yoniga) bog'lanadi ([[Settings.from_config_module]]).
-_PATH_FIELDS = ("token_file", "camkey_file")
+_PATH_FIELDS = ("token_file", "camkey_file", "rtsp_file")
 
 
 def data_dir() -> str:
@@ -56,6 +56,10 @@ def default_token_file() -> str:
 
 def default_camkey_file() -> str:
     return os.path.join(data_dir(), "cam_keys.json")
+
+
+def default_rtsp_file() -> str:
+    return os.path.join(data_dir(), "rtsp_cameras.json")
 _MISSING = object()
 _TRUE = ("1", "true", "yes", "on")
 
@@ -99,6 +103,8 @@ class Settings:
     # Standart — foydalanuvchi papkasi ([[data_dir]]), joriy papka EMAS.
     token_file: str = field(default_factory=default_token_file)
     camkey_file: str = field(default_factory=default_camkey_file)
+    # Oddiy RTSP kameralar (nom -> rtsp:// manzil, parol bilan; 0600).
+    rtsp_file: str = field(default_factory=default_rtsp_file)
     # Hisob metama'lumot keshini (VTM) fonda issiq tutish — ochilish ~6s o'rniga ~0.2s.
     warm_cache: bool = True
     # ── ISUP 5.0 ([[isup]]) ───────────────────────────────────────────

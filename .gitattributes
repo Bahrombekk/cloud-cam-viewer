@@ -1,2 +1,4 @@
 # Linux konteynerda ishlatiladi: CRLF .env/skript qiymatlarini buzadi
 isup-bridge/** text eol=lf
+docker/** text eol=lf
+.dockerignore text eol=lf

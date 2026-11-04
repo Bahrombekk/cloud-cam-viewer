@@ -1,0 +1,28 @@
+# cloudcam serve — har kamera lokal RTSP / WebRTC / HLS oqim. Batafsil: docs/docker.md
+#
+#   cp docker/.env.example docker/.env            # hisob ma'lumotlari
+#   docker compose -f docker/docker-compose.yml run --rm cloudcam keys   # kodlar (bir marta)
+#   docker compose -f docker/docker-compose.yml up -d --build
+#
+# Bir xil compose tarmog'idagi boshqa konteynerlar (masalan Frigate) oqimni
+# rtsp://cloudcam:8554/cam/<SERIAL>_<KANAL> dan o'qiydi — port ochish shart emas.
+services:
+  cloudcam:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: cloudcam:local
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - cloudcam-data:/data
+    # Standart: faqat SHU kompyuterdan (127.0.0.1). Tarmoqqa ochish uchun docs/docker.md
+    # dagi "Exposing the streams" qismiga qarang (o'qish paroli bilan).
+    ports:
+      - "127.0.0.1:8554:8554"        # RTSP
+      - "127.0.0.1:8888:8888"        # HLS
+      - "127.0.0.1:8889:8889"        # WebRTC (HTTP)
+      - "127.0.0.1:8189:8189/udp"    # WebRTC (media)
+
+volumes:
+  cloudcam-data:

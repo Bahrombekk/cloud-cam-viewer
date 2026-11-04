@@ -1,6 +1,6 @@
 # Roadmap and engineering backlog
 
-Status as of 2026-11-04. Latest release: **0.3.0** (see [CHANGELOG.md](../CHANGELOG.md)).
+Status as of 2026-11-04. Latest release: **0.4.0** (see [CHANGELOG.md](../CHANGELOG.md)).
 
 This document is the working plan behind the short roadmap in the
 [README](../README.md#roadmap). Each open item states the problem, where it lives and
@@ -29,11 +29,8 @@ operability, **P2** hardening and polish.
 
 ## 2. Reliability (P0)
 
-- [ ] **Concurrent session refresh.** Every per-camera proxy that gets HTTP 401 calls
-  `CloudClient.refresh_and_save` at the same time. The refresh token rotates, so all
-  but one can be rejected and fall back to a full login (CAPTCHA / 2FA risk).
-  Approach: a lock file next to `token.json` around read-refresh-write, re-reading the
-  file after acquiring it.
+- [x] **Concurrent session refresh** (0.4): `core.fsutil.file_lock` around every
+  refresh/login path, token file re-read after the lock is taken.
 - [ ] **Watchdog vs. `auto` stream mode.** `CameraStream.FREEZE_TIMEOUT` is 20 s; the
   proxy may spend 6 s probing the substream and up to 20 s on the main stream, so a
   slow camera can be killed before its first frame and loop. Approach: measure, then
@@ -145,7 +142,24 @@ first IRAP, ffmpeg probe) so it is known which item dominates.
 
 ## 9. Features
 
-- [ ] **0.4 — `cloudcam serve`.** Every camera as a local RTSP / WebRTC stream through
+- [x] **0.4, step 1 — `cloudcam stream` / `CloudCam.publish()`**: one camera to an RTSP
+  server without transcoding, arrival-time timestamps, connect timeout.
+- [x] **0.4, step 2 — `cloudcam serve`**: MediaMTX config with an on-demand main and
+  `/sub` path per camera; verified with MediaMTX 1.20.0 and a live camera.
+- [x] **Sibling sessions** (0.4): the stream that "ended" was ours (probe timeout kept
+  for the session); fixed. What remains is device behaviour: on some NVRs (DS-7608NI-Q1)
+  closing one session of a channel freezes the other ~9-10 s, independent of token and
+  close method (graceful / RST); other channels and DS-7732NXI-K4(E) are not affected.
+  Viewers stay connected (readTimeout 30 s, session timeout 20 s).
+- [x] **`cloudcam serve` killed hard** (0.4): `core.procutil.popen_bound` (Windows job
+  object, Linux PDEATHSIG). macOS has neither; a watcher process would be needed there.
+- [ ] ISUP paths in `cloudcam serve` (MediaMTX `source: rtsp://` to the bridge).
+- [x] **0.4**: `cloudcam serve --install-mediamtx` (official release, SHA-256 checked).
+- [x] **0.4, step 3**: Docker image (cloudcam + ffmpeg + MediaMTX), verified with a live
+  camera; Frigate and Home Assistant examples (not run against Frigate / HA yet).
+- [ ] Image size (1 GB, mostly ffmpeg's dependencies): a static ffmpeg or a multi-stage
+  build could halve it; publish multi-arch images to a registry.
+- [x] **0.4 — `cloudcam serve` (overall), released in 0.4.0.** Every camera as a local RTSP / WebRTC stream through
   MediaMTX or go2rtc, with one upstream cloud session per camera shared by any number
   of viewers (fan-out in the media layer, never one cloud stream per viewer). Usable
   as a Frigate or Home Assistant source; Docker image.

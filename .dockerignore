@@ -1,0 +1,12 @@
+# RUXSAT RO'YXATI: hammasi taqiqlangan, image'ga faqat kerakli fayllar kiradi.
+# Ildizda token.json, cam_keys.json, config.py kabi sirlar turadi — ular image'ga
+# (va undan registry'ga) hech qachon tushmasin, yangi sir fayli qo'shilsa ham.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!NOTICE
+!src/
+**/__pycache__
+**/*.pyc
+**/*.egg-info
