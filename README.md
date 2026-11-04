@@ -28,9 +28,10 @@ the included [`isup-bridge`](isup-bridge/), which needs Hikvision's ISUP SDK (se
 - [Command-line reference](#command-line-reference)
 - [Python API](#python-api)
 - [RTSP gateway](#rtsp-gateway)
+- [RTSP cameras](#rtsp-cameras)
 - [ISUP 5.0](#isup-50)
 - [Architecture](#architecture)
-- [Compatibility](#compatibility)
+- [Supported cameras](#supported-cameras)
 - [Limitations](#limitations)
 - [Security](#security)
 - [Roadmap](#roadmap)
@@ -54,7 +55,7 @@ your control.
 | Cloud-only camera (no local RTSP) | Yes | No (needs a source) | Yes |
 | Encrypted stream decrypted locally | Inside the app | No | Yes |
 | Frames available to your own code | No | Yes (from RTSP) | Yes |
-| RTSP / WebRTC restream | No | Yes | Planned ([v0.4](#roadmap)) |
+| RTSP / WebRTC restream | No | Yes | Yes (`cloudcam serve`) |
 
 `cloudcam` is designed to sit in front of go2rtc, MediaMTX or Frigate, not to
 replace them.
@@ -79,9 +80,14 @@ replace them.
 - **NVIDIA NVDEC** decoding when available, with automatic software fallback.
 - **24/7 operation**: automatic reconnect, frozen-stream watchdog, and a jitter buffer
   that evens out the cloud's burst delivery.
+- **RTSP gateway** (`cloudcam serve`): every camera as an on-demand RTSP / WebRTC / HLS
+  stream through MediaMTX, one cloud stream shared by all viewers, for Frigate, Home
+  Assistant or VLC; also as a [Docker image](docs/docker.md).
+- **RTSP cameras**: probe, scan and add cameras and NVRs of any vendor reachable by RTSP,
+  served and viewed next to the cloud cameras.
 - **ISUP 5.0** (experimental): a C++ bridge in [`isup-bridge/`](isup-bridge/) and its
   client (`IsupBridge`, `cloudcam isup`, `CloudCam.open_isup()`).
-- **Test suite** of more than 250 tests that run without a cloud account or network.
+- **Test suite** of more than 350 tests that run without a cloud account or network.
 
 ## Requirements
 
@@ -425,6 +431,38 @@ publishes to an RTSP server you already run.
 Run it in Docker (cloudcam, ffmpeg and MediaMTX in one image): [docs/docker.md](docs/docker.md).
 Frigate, Home Assistant and other clients: [docs/integrations.md](docs/integrations.md).
 
+## RTSP cameras
+
+Cameras and NVRs that you can reach over the network by RTSP (any vendor) can be
+added next to the cloud cameras. They need no cloud account and no decryption.
+
+```bash
+cloudcam rtsp probe 'rtsp://admin:secret@192.168.1.64:554/Streaming/Channels/101'
+cloudcam rtsp scan 192.168.1.64 --user admin --pass 'secret' --save gate
+cloudcam rtsp add gate 'rtsp://admin:secret@192.168.1.64:554/Streaming/Channels/101'
+cloudcam rtsp list                      # passwords are shown as ***
+cloudcam rtsp remove gate
+```
+
+| Command | Description |
+|---|---|
+| `cloudcam rtsp probe URL [--no-sub] [--timeout S]` | Checks the camera stage by stage (network, RTSP, credentials, stream) and says which stage failed; reports codec, size and fps and finds the substream |
+| `cloudcam rtsp scan HOST --user U --pass P [--vendor V] [--channels N] [--save NAME]` | Detects the vendor (Hikvision, Dahua/Amcrest, Uniview, Reolink, Axis, Holowits) and lists the channels that really stream; `--save` stores them as `NAME_<ch>` |
+| `cloudcam rtsp add NAME URL [--sub-url URL] [--no-check]` | Saves a camera (checked first unless `--no-check`) |
+| `cloudcam rtsp list` / `cloudcam rtsp remove NAME` | Lists or removes saved cameras |
+
+Saved cameras are stored in `<data dir>/rtsp_cameras.json` (owner-only permissions; the
+URLs contain passwords). They appear in `cloudcam serve` as `rtsp/<NAME>` and
+`rtsp/<NAME>/sub` (MediaMTX pulls them on demand, no extra process), in `cloudcam view`,
+and in `cloudcam snapshot NAME`; `CloudCam.open_rtsp(url)` opens one from Python.
+`--no-cloud` on `serve` and `view` uses only the RTSP cameras; without a cloud account
+that is the default.
+
+Status: tested against a simulated RTSP server and MediaMTX test streams, not yet against
+a physical RTSP camera; reports are welcome. `cloudcam view` and `cloudcam snapshot` open
+RTSP over TCP only, so cameras that only stream over UDP may not open there
+(`cloudcam serve` lets MediaMTX choose); automatic TCP/UDP selection is planned for 0.5.
+
 ## ISUP 5.0
 
 The cloud path depends on the cloud: 4-14 s to the first frame, a limit on
@@ -500,10 +538,28 @@ ffmpeg process. Live viewing does not require a cloud storage subscription.
 Implementation details, with measurements from real cameras, are documented in
 [docs/internals.md](docs/internals.md).
 
-## Compatibility
+## Supported cameras
 
-Verified on real hardware so far. Reports for other devices are welcome via the
-[camera compatibility form](https://github.com/Bahrombekk/cloud-cam-viewer/issues/new?template=camera_compat.yml).
+Models verified on a live Hik-Connect account (2026-11-04): the stream was opened through
+the cloud, decoded, and served through `cloudcam serve` where noted.
+
+| Model | Type | Platform | Codec | Status |
+|---|---|---|---|---|
+| DS-7732NXI-K4(E) | NVR, 32 ch | Hik-Connect | H.265 | Works (16 channels checked) |
+| DS-7732NI-K4 | NVR, 32 ch | Hik-Connect | H.265 | Works (5 channels checked) |
+| DS-7632NXI-K2(D) | NVR, 32 ch | Hik-Connect | H.265 | Works |
+| DS-7608NI-Q1 | NVR, 8 ch | Hik-Connect | H.265 | Works, also through `cloudcam serve` (main and substream) |
+| DS-TCG406-E (fw V5.4.0) | ITS camera | ISUP 5.0 (`isup-bridge`) | H.265 | Works |
+
+The channels listed above stream without encryption. Encrypted streams are decrypted
+per stream format (table below); encrypted devices on the test account could not be
+checked on this date because their verification codes were not available. EZVIZ cloud
+accounts have not been verified yet.
+
+Not your model? [Add it with the camera compatibility form](https://github.com/Bahrombekk/cloud-cam-viewer/issues/new?template=camera_compat.yml)
+(`cloudcam cameras --check` shows which channels work).
+
+Stream formats verified on real hardware:
 
 | Source | Device | Transport / codec | Encryption | Status |
 |---|---|---|---|---|
@@ -555,17 +611,18 @@ not been exercised on a live account yet.
   the process list and shell history.
 - `config.py` is executed as Python; do not run `cloudcam` in a directory whose
   `config.py` you do not trust.
+- RTSP camera URLs include the camera password. They are stored with owner-only
+  permissions and hidden in cloudcam's output, but the URL is on the ffmpeg command line
+  while `cloudcam view` / `snapshot` reads an RTSP camera, where other local users can
+  see it in the process list.
 
 Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
-- **v0.4, `cloudcam serve`** (in progress; `cloudcam stream` is the first part): every
-  camera as a local RTSP / WebRTC stream through
-  go2rtc / MediaMTX, with one upstream cloud session shared by any number of viewers,
-  usable as a source in Frigate or Home Assistant. Includes a Docker image.
-- **v0.5, benchmarks**: reproducible first-frame p50/p95, recovery after network loss,
-  and CPU usage per camera.
+- **v0.5**: faster first frame and automatic TCP/UDP for RTSP cameras, ISUP cameras in
+  `cloudcam serve`, reproducible benchmarks (first-frame p50/p95, recovery after network
+  loss, CPU per camera).
 - Publication on PyPI.
 
 The detailed engineering backlog is in [docs/roadmap.md](docs/roadmap.md); released

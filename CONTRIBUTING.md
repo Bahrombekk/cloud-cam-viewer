@@ -9,7 +9,7 @@ The protocol varies by camera model and firmware. If `cloudcam` works (or doesn'
 with your camera, open a
 [Camera compatibility](https://github.com/Bahrombekk/cloud-cam-viewer/issues/new?template=camera_compat.yml)
 issue. It takes two minutes and directly grows the
-[compatibility table](README.md#compatibility).
+[supported cameras table](README.md#supported-cameras).
 
 ## Development setup
 
