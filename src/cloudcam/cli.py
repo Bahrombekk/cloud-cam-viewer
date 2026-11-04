@@ -39,6 +39,13 @@ def _cam(args) -> CloudCam:
                    "(yoki config.py)."))
     cam = CloudCam(settings=s)
     cam.login()
+    if cam.migrated:
+        import os
+        where = os.path.dirname(s.token_file)
+        print(t(f"Moved {', '.join(cam.migrated)} to {where} (originals kept; "
+                f"you may delete them)",
+                f"{', '.join(cam.migrated)} {where} ga ko'chirildi (asl fayllar "
+                f"qoldi; o'chirsangiz bo'ladi)"), file=sys.stderr)
     return cam
 
 

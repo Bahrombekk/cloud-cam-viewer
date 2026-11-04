@@ -294,8 +294,8 @@ class CloudClient:
 
     @staticmethod
     def _default_token_file() -> str:
-        from cloudcam.settings import get_active
-        return get_active().token_file or "token.json"
+        from cloudcam.settings import default_token_file, get_active
+        return get_active().token_file or default_token_file()
 
     def refresh_session(self, allow_login=True):
         """

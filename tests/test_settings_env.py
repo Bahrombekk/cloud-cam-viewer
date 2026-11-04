@@ -10,6 +10,7 @@ Shu bilan birga PAROL uzatilmasligi kerak: u bola-jarayonga kerak emas
 (u tokenni fayldan o'qiydi), muhit o'zgaruvchisi esa ko'p tizimlarda
 jarayonlar ro'yxatidan ko'rinadi.
 """
+import os
 import re
 from pathlib import Path
 
@@ -31,7 +32,12 @@ def test_every_field_survives_the_round_trip(monkeypatch):
     for field in ("platform", "substream", "stream_mode", "display_width",
                   "display_height", "use_gpu", "proxy_start_port",
                   "token_file", "camkey_file", "region"):
-        assert getattr(back, field) == getattr(s, field), field
+        want = getattr(s, field)
+        if field in ("token_file", "camkey_file"):
+            # Muhitdan kelgan yo'l ABSOLYUT qilinadi — bola-jarayon boshqa cwd
+            # bilan ishlaydi ([[Settings.from_env]]).
+            want = os.path.abspath(want)
+        assert getattr(back, field) == want, field
 
 
 def test_types_are_restored_not_left_as_strings(monkeypatch):

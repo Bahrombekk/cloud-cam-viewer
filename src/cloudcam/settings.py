@@ -15,9 +15,47 @@ va stream_manager global config o'rniga shuni o'qiydi).
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field, fields
 
 ENV_PREFIX = "CLOUDCAM_"
+HOME_ENV = "CLOUDCAM_HOME"
+# Fayl yo'li bo'lgan maydonlar — nisbiy qiymat JORIY papkaga emas, manbasiga
+# (config.py yoniga) bog'lanadi ([[Settings.from_config_module]]).
+_PATH_FIELDS = ("token_file", "camkey_file")
+
+
+def data_dir() -> str:
+    r"""cloudcam fayllari (sessiya, kodlar, terminal ID, kesh) uchun standart papka.
+
+    Ilgari standart `token.json` NISBIY edi — buyruq qaysi papkadan ishga
+    tushsa, sessiya o'sha yerda yaratilardi. Natijada bitta kompyuterda bir
+    nechta `token.json`/`feature_code.txt` paydo bo'lib, bulut bitta hisobni
+    bir nechta "qurilma" deb ko'rardi (yangi qurilma 2FA, terminal limiti).
+
+    `CLOUDCAM_HOME` -> Windows `%APPDATA%\cloudcam`, macOS
+    `~/Library/Application Support/cloudcam`, boshqalar `$XDG_CONFIG_HOME/cloudcam`
+    (`~/.config/cloudcam`)."""
+    env = (os.environ.get(HOME_ENV) or "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Roaming")
+    elif sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config")
+    return os.path.join(base, "cloudcam")
+
+
+def default_token_file() -> str:
+    return os.path.join(data_dir(), "token.json")
+
+
+def default_camkey_file() -> str:
+    return os.path.join(data_dir(), "cam_keys.json")
 _MISSING = object()
 _TRUE = ("1", "true", "yes", "on")
 
@@ -58,8 +96,9 @@ class Settings:
     # ([[cloudcam.sources.cloud.proxy.serve]]). Hamma kamerada ham substream yo'q (masalan
     # batareyali modellar), shuning uchun qattiq "sub" xavfli.
     stream_mode: str = "main"
-    token_file: str = "token.json"
-    camkey_file: str = "cam_keys.json"
+    # Standart — foydalanuvchi papkasi ([[data_dir]]), joriy papka EMAS.
+    token_file: str = field(default_factory=default_token_file)
+    camkey_file: str = field(default_factory=default_camkey_file)
     # Hisob metama'lumot keshini (VTM) fonda issiq tutish — ochilish ~6s o'rniga ~0.2s.
     warm_cache: bool = True
     # ── ISUP 5.0 ([[isup]]) ───────────────────────────────────────────
@@ -82,11 +121,17 @@ class Settings:
         c = _load_config_module()
         if c is None:
             return cls()
+        base = os.path.dirname(os.path.abspath(getattr(c, "__file__", "") or "config.py"))
         vals = {}
         for f in fields(cls):
             v = getattr(c, f.name.upper(), _MISSING)
-            if v is not _MISSING:
-                vals[f.name] = v
+            if v is _MISSING:
+                continue
+            # `TOKEN_FILE = "token.json"` — config.py YONIDAGI fayl, buyruq
+            # qaysi papkadan ishga tushirilganidan qat'i nazar.
+            if f.name in _PATH_FIELDS and isinstance(v, str) and v and not os.path.isabs(v):
+                v = os.path.join(base, v)
+            vals[f.name] = v
         return cls(**vals)
 
     @classmethod
@@ -100,7 +145,10 @@ class Settings:
             raw = os.environ.get(f"{ENV_PREFIX}{f.name.upper()}")
             if raw is None:
                 continue
-            vals[f.name] = _coerce(f.type, raw)
+            v = _coerce(f.type, raw)
+            if f.name in _PATH_FIELDS and v:
+                v = os.path.abspath(os.path.expanduser(v))   # bola-jarayonlar bilan bir xil
+            vals[f.name] = v
         return s.replace(**vals)
 
     def to_env(self) -> dict[str, str]:

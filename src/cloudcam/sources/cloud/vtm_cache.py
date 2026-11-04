@@ -27,7 +27,7 @@ import time
 from typing import Any
 
 from cloudcam.core.paths import cache_dir  # noqa: F401  (re-export)
-from cloudcam.settings import get_active
+from cloudcam.settings import default_token_file, get_active
 from cloudcam.sources.cloud.vtm import cloud as _cloud
 
 TTL_SECONDS = 3600.0            # kesh amal qilish muddati
@@ -43,7 +43,7 @@ def _ttl() -> float:
 
 def account_key(token_file: str | None = None) -> str:
     """Hisob kaliti — token fayl nomidan (`token.json` -> `token`)."""
-    tok = token_file or get_active().token_file or "token.json"
+    tok = token_file or get_active().token_file or default_token_file()
     return os.path.splitext(os.path.basename(tok))[0] or "default"
 
 

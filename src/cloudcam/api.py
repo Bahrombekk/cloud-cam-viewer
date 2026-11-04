@@ -145,6 +145,7 @@ class CloudCam:
         self._key_fetch_blocked = False        # 2FA ko'tarilmagan -> avto-olishni to'xtatamiz
         self._isup = None                      # kech yaratiladi ([[isup]])
         self._warmer = None                    # VTM keshini fonda issiq tutadi
+        self.migrated: list[str] = []          # login() eski fayllarni ko'chirgan bo'lsa
 
     def _start_cache_warmer(self) -> None:
         """Hisob metama'lumot keshini fonda issiq tutish ([[vtm_cache.Warmer]]).
@@ -173,6 +174,10 @@ class CloudCam:
 
         `force=True` — eski xatti-harakat (majburiy to'liq login).
         """
+        # Eski versiya sessiyani JORIY papkada saqlardi — yangi standart joyga
+        # nusxalaymiz, aks holda qayta login + "yangi qurilma" 2FA bo'lardi.
+        from cloudcam.core import paths
+        self.migrated = paths.migrate_legacy(self.settings)
         if force:
             self.client.login()
             self.client.save_token(self.settings.token_file)

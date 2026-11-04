@@ -43,8 +43,8 @@ def _from_mac() -> str:
 
 def _store_path() -> str:
     """Kod saqlanadigan fayl — token fayli yonida (u ham shu o'rnatmaga tegishli)."""
-    from cloudcam.settings import get_active
-    tok = get_active().token_file or "token.json"
+    from cloudcam.settings import default_token_file, get_active
+    tok = get_active().token_file or default_token_file()
     d = os.path.dirname(os.path.abspath(tok))
     return os.path.join(d, _FILENAME)
 

@@ -19,11 +19,11 @@ from dataclasses import dataclass, field
 
 from cloudcam.sources.cloud.client import MfaRequired
 from cloudcam.core.fsutil import harden, write_private
-from cloudcam.settings import get_active
+from cloudcam.settings import default_camkey_file, get_active
 
 
 def _path(path: str | None = None) -> str:
-    return path or get_active().camkey_file or "cam_keys.json"
+    return path or get_active().camkey_file or default_camkey_file()
 
 
 class KeysFileError(ValueError):

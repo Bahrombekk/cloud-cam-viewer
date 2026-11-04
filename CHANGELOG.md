@@ -31,6 +31,14 @@ minor versions; such changes are always listed here.
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue and pull-request templates.
 
 ### Changed
+- **Session, codes and terminal id now live in a per-user data directory** by default
+  (`%APPDATA%\cloudcam`, `~/Library/Application Support/cloudcam`, `~/.config/cloudcam`,
+  or `CLOUDCAM_HOME`). The old default `token.json` was relative to the working
+  directory, so running from another folder created a second session and a second
+  `feature_code.txt`, and the cloud saw one account as two devices. Relative
+  `TOKEN_FILE` / `CAMKEY_FILE` in `config.py` now resolve next to `config.py`; relative
+  `CLOUDCAM_TOKEN_FILE` / `CLOUDCAM_CAMKEY_FILE` are made absolute. Legacy files in the
+  working directory are copied (not moved) on the first login.
 - **BREAKING — package layout.** The code moved to a `src/` layout and is split into
   layers that may only import downwards (`core < codec < media < sources < app`),
   enforced by `tests/test_layout.py`. `decrypt_proxy.py` (1290 lines, six jobs) is now

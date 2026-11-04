@@ -12,3 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path_factory, monkeypatch):
+    """Standart fayl joyi ([[cloudcam.settings.data_dir]]) — foydalanuvchining
+    HAQIQIY `%APPDATA%`/`~/.config` papkasi. Testlar unga tegmasin."""
+    monkeypatch.setenv("CLOUDCAM_HOME", str(tmp_path_factory.mktemp("cloudcam-home")))
